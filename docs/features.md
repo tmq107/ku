@@ -29,6 +29,13 @@ filter shows in the header and clears with `esc`). `w` toggles the wide columns
 that `kubectl get -o wide` would show. Listing across all namespaces (`a`) adds a
 NAMESPACE column.
 
+Cells are colored by meaning so lists are not flat: status/phase is green when
+healthy, yellow when transient (Pending, ContainerCreating), and red when broken
+(CrashLoopBackOff, Error, OOMKilled); the READY ratio and restart counts are
+colored the same way; CPU%/MEM% turn yellow then red as they climb; and metadata
+like age and IP is dimmed so names and problems stand out. The selected row is a
+single highlight bar.
+
 `S` sorts by a column: it opens a picker of the current columns, and re-picking
 the active column flips direction (a `▲`/`▼` marks the sorted column header).
 Sorting is type-aware, so AGE sorts by duration, CPU/MEM and percentages sort

@@ -5,10 +5,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/cursor"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/bjarneo/kli/internal/k8s"
 )
@@ -19,14 +18,17 @@ const (
 	nameFloor   = 16
 )
 
-// tableView renders a resource list with live filtering and column fitting.
+// tableView renders a resource list with live filtering, column sorting, and
+// per-cell color. It owns its own cursor/scroll so it can color cells (which
+// the bubbles table cannot do safely).
 type tableView struct {
 	th Theme
 
-	tbl     table.Model
 	cols    []k8s.Column // all columns from the server
 	allRows []k8s.Row    // unfiltered
-	rows    []k8s.Row    // currently displayed (parallel to tbl rows)
+	rows    []k8s.Row    // currently displayed (filtered + sorted)
+	vis     []int        // visible column indices (parallel to widths)
+	widths  []int        // fitted widths for visible columns
 
 	filtering bool
 	filter    textinput.Model
@@ -35,70 +37,18 @@ type tableView struct {
 	sortCol  int // index into cols, -1 for default (server) order
 	sortDesc bool
 
-	width int
+	cursor int
+	offset int // first visible row
+	width  int
+	height int
 }
 
 func newTableView(th Theme) tableView {
-	km := table.DefaultKeyMap()
-	km.LineUp = key.NewBinding(key.WithKeys("up", "k"))
-	km.LineDown = key.NewBinding(key.WithKeys("down", "j"))
-	km.PageUp = key.NewBinding(key.WithKeys("pgup"))
-	km.PageDown = key.NewBinding(key.WithKeys("pgdown"))
-	km.HalfPageUp = key.NewBinding(key.WithKeys("ctrl+u"))
-	km.HalfPageDown = key.NewBinding(key.WithKeys("ctrl+d"))
-	km.GotoTop = key.NewBinding(key.WithKeys("g", "home"))
-	km.GotoBottom = key.NewBinding(key.WithKeys("G", "end"))
-
-	tbl := table.New(table.WithFocused(true), table.WithKeyMap(km))
-	tbl.SetStyles(table.Styles{
-		Header:   th.TableHeader,
-		Cell:     th.TableCell,
-		Selected: th.TableSelected,
-	})
-
 	fi := textinput.New()
 	fi.Prompt = "/"
 	fi.Placeholder = "filter"
 	fi.Cursor.SetMode(cursor.CursorStatic)
-
-	return tableView{th: th, tbl: tbl, filter: fi, sortCol: -1}
-}
-
-// setSort sorts by the given column index. Re-selecting the active column flips
-// the direction; idx < 0 restores the server's default order. Numeric columns
-// default to descending (most interesting first).
-func (v *tableView) setSort(idx int) {
-	switch {
-	case idx < 0:
-		v.sortCol = -1
-	case idx == v.sortCol:
-		v.sortDesc = !v.sortDesc
-	default:
-		v.sortCol = idx
-		v.sortDesc = sortDescByDefault(v.colName(idx))
-	}
-	v.rebuild()
-}
-
-func (v *tableView) resetSort() {
-	v.sortCol = -1
-	v.sortDesc = false
-}
-
-func (v *tableView) colName(i int) string {
-	if i >= 0 && i < len(v.cols) {
-		return v.cols[i].Name
-	}
-	return ""
-}
-
-func sortDescByDefault(name string) bool {
-	n := strings.ToLower(name)
-	switch {
-	case n == "age", n == "restarts", strings.Contains(n, "cpu"), strings.Contains(n, "mem"), strings.HasSuffix(n, "%"):
-		return true
-	}
-	return false
+	return tableView{th: th, filter: fi, sortCol: -1}
 }
 
 func (v *tableView) setSize(w, h int) {
@@ -106,8 +56,7 @@ func (v *tableView) setSize(w, h int) {
 	if h < 1 {
 		h = 1
 	}
-	v.tbl.SetHeight(h)
-	v.tbl.SetWidth(w)
+	v.height = h
 	if fw := w - 8; fw > 4 {
 		v.filter.Width = fw // bound the filter input so it can't overflow
 	}
@@ -146,22 +95,51 @@ func (v *tableView) stopFilter(clear bool) {
 	}
 }
 
-// filterActive reports whether a filter is narrowing the list, whether or not
-// the filter input is currently focused.
-func (v *tableView) filterActive() bool {
-	return v.filter.Value() != ""
+func (v *tableView) filterActive() bool  { return v.filter.Value() != "" }
+func (v *tableView) filterValue() string { return v.filter.Value() }
+
+// setSort sorts by the given column index. Re-selecting the active column flips
+// the direction; idx < 0 restores the server's default order. Numeric columns
+// default to descending (most interesting first).
+func (v *tableView) setSort(idx int) {
+	switch {
+	case idx < 0:
+		v.sortCol = -1
+	case idx == v.sortCol:
+		v.sortDesc = !v.sortDesc
+	default:
+		v.sortCol = idx
+		v.sortDesc = sortDescByDefault(v.colName(idx))
+	}
+	v.rebuild()
 }
 
-func (v *tableView) filterValue() string {
-	return v.filter.Value()
+func (v *tableView) resetSort() {
+	v.sortCol = -1
+	v.sortDesc = false
+}
+
+func (v *tableView) colName(i int) string {
+	if i >= 0 && i < len(v.cols) {
+		return v.cols[i].Name
+	}
+	return ""
+}
+
+func sortDescByDefault(name string) bool {
+	n := strings.ToLower(name)
+	switch {
+	case n == "age", n == "restarts", strings.Contains(n, "cpu"), strings.Contains(n, "mem"), strings.HasSuffix(n, "%"):
+		return true
+	}
+	return false
 }
 
 func (v *tableView) selected() (k8s.Row, bool) {
-	i := v.tbl.Cursor()
-	if i < 0 || i >= len(v.rows) {
+	if v.cursor < 0 || v.cursor >= len(v.rows) {
 		return k8s.Row{}, false
 	}
-	return v.rows[i], true
+	return v.rows[v.cursor], true
 }
 
 func (v *tableView) count() int { return len(v.rows) }
@@ -184,17 +162,17 @@ func cell(cells []string, i int) string {
 	return cells[i]
 }
 
-// rebuild recomputes the filtered rows, fits column widths to the terminal and
-// pushes them into the underlying table, preserving the cursor position.
+// rebuild recomputes the filtered+sorted rows and fitted widths, keeping the
+// cursor in range and visible.
 func (v *tableView) rebuild() {
-	vis := v.visibleCols()
+	v.vis = v.visibleCols()
 
-	// Filter rows (an empty filter keeps all rows in their original order).
+	// Filter (an empty filter keeps all rows in their original order).
 	v.rows = fuzzyRank(v.allRows, v.filter.Value(), func(r k8s.Row) string {
 		return strings.Join(r.Cells, " ")
 	})
 
-	// Apply an explicit column sort on top of the filter, if set.
+	// Optional explicit column sort, layered on top of the filter.
 	if v.sortCol >= 0 && v.sortCol < len(v.cols) {
 		name := v.cols[v.sortCol].Name
 		less := func(i, j int) bool {
@@ -207,44 +185,15 @@ func (v *tableView) rebuild() {
 		}
 	}
 
-	// Fit widths.
-	widths := v.fitWidths(vis)
-	cols := make([]table.Column, len(vis))
-	for n, ci := range vis {
-		title := strings.ToUpper(v.cols[ci].Name)
-		if ci == v.sortCol {
-			if v.sortDesc {
-				title += " ▼"
-			} else {
-				title += " ▲"
-			}
-		}
-		cols[n] = table.Column{Title: title, Width: widths[n]}
-	}
+	v.widths = v.fitWidths(v.vis)
 
-	trows := make([]table.Row, len(v.rows))
-	for ri, r := range v.rows {
-		tr := make(table.Row, len(vis))
-		for n, ci := range vis {
-			tr[n] = cell(r.Cells, ci)
-		}
-		trows[ri] = tr
+	if v.cursor >= len(v.rows) {
+		v.cursor = len(v.rows) - 1
 	}
-
-	cur := v.tbl.Cursor()
-	// Clear rows before swapping columns: bubbles re-renders existing rows
-	// against the new column set inside SetColumns, which panics if an old row
-	// has more cells than the new column count (e.g. toggling wide off).
-	v.tbl.SetRows(nil)
-	v.tbl.SetColumns(cols)
-	v.tbl.SetRows(trows)
-	if cur >= len(trows) {
-		cur = len(trows) - 1
+	if v.cursor < 0 {
+		v.cursor = 0
 	}
-	if cur < 0 {
-		cur = 0
-	}
-	v.tbl.SetCursor(cur)
+	v.ensureVisible()
 }
 
 func (v *tableView) fitWidths(vis []int) []int {
@@ -272,15 +221,13 @@ func (v *tableView) fitWidths(vis []int) []int {
 		widths[n] = w
 	}
 
-	// Budget excludes the 2 cells of horizontal padding bubbles adds per column.
+	// Budget excludes the 2 cells of horizontal padding per column.
 	budget := v.width - 2*len(vis)
 	if budget < len(vis) {
 		return widths
 	}
-
 	for sum(widths) > budget {
-		// Shrink the widest column that is still above its floor; protect the
-		// name column until everything else bottoms out.
+		// Shrink the widest column above its floor; protect the name column.
 		target, best := -1, -1
 		for n, ci := range vis {
 			floor := colFloor
@@ -293,7 +240,7 @@ func (v *tableView) fitWidths(vis []int) []int {
 			}
 			weight := widths[n]
 			if isName {
-				weight -= 1000 // deprioritize shrinking name
+				weight -= 1000
 			}
 			if weight > best {
 				best = weight
@@ -316,22 +263,139 @@ func sum(xs []int) int {
 	return t
 }
 
-// Update routes input either to the filter box or to table navigation.
+// --- navigation -------------------------------------------------------------
+
+func (v *tableView) visibleRows() int {
+	if v.height > 1 {
+		return v.height - 1 // one line for the header
+	}
+	return 0
+}
+
+func (v *tableView) moveCursor(d int) { v.setCursor(v.cursor + d) }
+
+func (v *tableView) setCursor(i int) {
+	if len(v.rows) == 0 {
+		v.cursor, v.offset = 0, 0
+		return
+	}
+	v.cursor = clamp(i, 0, len(v.rows)-1)
+	v.ensureVisible()
+}
+
+func (v *tableView) ensureVisible() {
+	vr := v.visibleRows()
+	if vr <= 0 {
+		v.offset = 0
+		return
+	}
+	if v.cursor < v.offset {
+		v.offset = v.cursor
+	}
+	if v.cursor >= v.offset+vr {
+		v.offset = v.cursor - vr + 1
+	}
+	maxOff := len(v.rows) - vr
+	if maxOff < 0 {
+		maxOff = 0
+	}
+	v.offset = clamp(v.offset, 0, maxOff)
+}
+
+// Update routes input to the filter box, or moves the cursor.
 func (v tableView) Update(msg tea.Msg) (tableView, tea.Cmd) {
 	if v.filtering {
 		prev := v.filter.Value()
 		var cmd tea.Cmd
 		v.filter, cmd = v.filter.Update(msg)
 		if v.filter.Value() != prev {
+			v.cursor, v.offset = 0, 0
 			v.rebuild()
 		}
 		return v, cmd
 	}
-	var cmd tea.Cmd
-	v.tbl, cmd = v.tbl.Update(msg)
-	return v, cmd
+	k, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return v, nil
+	}
+	vr := v.visibleRows()
+	switch k.String() {
+	case "up", "k":
+		v.moveCursor(-1)
+	case "down", "j":
+		v.moveCursor(1)
+	case "pgup":
+		v.moveCursor(-vr)
+	case "pgdown":
+		v.moveCursor(vr)
+	case "ctrl+u":
+		v.moveCursor(-vr / 2)
+	case "ctrl+d":
+		v.moveCursor(vr / 2)
+	case "g", "home":
+		v.setCursor(0)
+	case "G", "end":
+		v.setCursor(len(v.rows) - 1)
+	}
+	return v, nil
 }
 
+// --- rendering --------------------------------------------------------------
+
 func (v tableView) View() string {
-	return v.tbl.View()
+	lines := make([]string, 0, v.height)
+	lines = append(lines, v.headerLine())
+	vr := v.visibleRows()
+	for i := 0; i < vr; i++ {
+		idx := v.offset + i
+		if idx >= len(v.rows) {
+			lines = append(lines, "")
+			continue
+		}
+		lines = append(lines, v.renderRow(v.rows[idx], idx == v.cursor))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (v tableView) headerLine() string {
+	var b strings.Builder
+	for n, ci := range v.vis {
+		title := strings.ToUpper(v.cols[ci].Name)
+		if ci == v.sortCol {
+			if v.sortDesc {
+				title += " ▼"
+			} else {
+				title += " ▲"
+			}
+		}
+		b.WriteString(" " + v.th.HeaderVal.Render(cellFit(title, v.widths[n])) + " ")
+	}
+	return b.String()
+}
+
+func (v tableView) renderRow(row k8s.Row, selected bool) string {
+	var b strings.Builder
+	for n, ci := range v.vis {
+		val := cell(row.Cells, ci)
+		txt := cellFit(val, v.widths[n])
+		if selected {
+			b.WriteString(" " + txt + " ") // colored later via the whole-row highlight
+		} else {
+			b.WriteString(" " + styleCell(v.th, v.cols[ci].Name, val).Render(txt) + " ")
+		}
+	}
+	if selected {
+		return v.th.SelItemSel.Render(b.String())
+	}
+	return b.String()
+}
+
+// cellFit truncates s to w display columns (with an ellipsis when cut) and pads
+// it on the right to exactly w.
+func cellFit(s string, w int) string {
+	s = truncate(s, w)
+	if pad := w - ansi.StringWidth(s); pad > 0 {
+		s += strings.Repeat(" ", pad)
+	}
+	return s
 }

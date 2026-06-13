@@ -101,6 +101,7 @@ type Theme struct {
 	TableHeader   lipgloss.Style
 	TableCell     lipgloss.Style
 	TableSelected lipgloss.Style
+	Cell          lipgloss.Style // base cell text (terminal default fg on ANSI)
 
 	FooterKey  lipgloss.Style
 	FooterDesc lipgloss.Style
@@ -134,6 +135,7 @@ func NewTheme(name string, p Palette) Theme {
 	t.HeaderVal = lipgloss.NewStyle().Foreground(p.Accent).Bold(true)
 	t.Rule = lipgloss.NewStyle().Foreground(p.Border)
 
+	t.Cell = lipgloss.NewStyle().Foreground(p.Fg) // NoColor on ANSI = terminal default
 	t.TableHeader = lipgloss.NewStyle().Bold(true).Foreground(p.Accent).Padding(0, 1)
 	cell := lipgloss.NewStyle().Padding(0, 1)
 	if !p.ReverseSel {
