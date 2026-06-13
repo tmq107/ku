@@ -19,6 +19,7 @@ const (
 	selContainer
 	selExecContainer
 	selScale
+	selSort
 )
 
 const selMaxVisible = 12

@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/cursor"
@@ -31,6 +32,9 @@ type tableView struct {
 	filter    textinput.Model
 	showWide  bool
 
+	sortCol  int // index into cols, -1 for default (server) order
+	sortDesc bool
+
 	width int
 }
 
@@ -57,7 +61,44 @@ func newTableView(th Theme) tableView {
 	fi.Placeholder = "filter"
 	fi.Cursor.SetMode(cursor.CursorStatic)
 
-	return tableView{th: th, tbl: tbl, filter: fi}
+	return tableView{th: th, tbl: tbl, filter: fi, sortCol: -1}
+}
+
+// setSort sorts by the given column index. Re-selecting the active column flips
+// the direction; idx < 0 restores the server's default order. Numeric columns
+// default to descending (most interesting first).
+func (v *tableView) setSort(idx int) {
+	switch {
+	case idx < 0:
+		v.sortCol = -1
+	case idx == v.sortCol:
+		v.sortDesc = !v.sortDesc
+	default:
+		v.sortCol = idx
+		v.sortDesc = sortDescByDefault(v.colName(idx))
+	}
+	v.rebuild()
+}
+
+func (v *tableView) resetSort() {
+	v.sortCol = -1
+	v.sortDesc = false
+}
+
+func (v *tableView) colName(i int) string {
+	if i >= 0 && i < len(v.cols) {
+		return v.cols[i].Name
+	}
+	return ""
+}
+
+func sortDescByDefault(name string) bool {
+	n := strings.ToLower(name)
+	switch {
+	case n == "age", n == "restarts", strings.Contains(n, "cpu"), strings.Contains(n, "mem"), strings.HasSuffix(n, "%"):
+		return true
+	}
+	return false
 }
 
 func (v *tableView) setSize(w, h int) {
@@ -153,11 +194,32 @@ func (v *tableView) rebuild() {
 		return strings.Join(r.Cells, " ")
 	})
 
+	// Apply an explicit column sort on top of the filter, if set.
+	if v.sortCol >= 0 && v.sortCol < len(v.cols) {
+		name := v.cols[v.sortCol].Name
+		less := func(i, j int) bool {
+			return cellLess(name, cell(v.rows[i].Cells, v.sortCol), cell(v.rows[j].Cells, v.sortCol))
+		}
+		if v.sortDesc {
+			sort.SliceStable(v.rows, func(i, j int) bool { return less(j, i) })
+		} else {
+			sort.SliceStable(v.rows, less)
+		}
+	}
+
 	// Fit widths.
 	widths := v.fitWidths(vis)
 	cols := make([]table.Column, len(vis))
 	for n, ci := range vis {
-		cols[n] = table.Column{Title: strings.ToUpper(v.cols[ci].Name), Width: widths[n]}
+		title := strings.ToUpper(v.cols[ci].Name)
+		if ci == v.sortCol {
+			if v.sortDesc {
+				title += " ▼"
+			} else {
+				title += " ▲"
+			}
+		}
+		cols[n] = table.Column{Title: title, Width: widths[n]}
 	}
 
 	trows := make([]table.Row, len(v.rows))
@@ -189,6 +251,9 @@ func (v *tableView) fitWidths(vis []int) []int {
 	widths := make([]int, len(vis))
 	for n, ci := range vis {
 		w := len(v.cols[ci].Name)
+		if ci == v.sortCol {
+			w += 2 // room for the " ▲" / " ▼" indicator
+		}
 		for _, r := range v.allRows {
 			if l := len(cell(r.Cells, ci)); l > w {
 				w = l

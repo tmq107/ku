@@ -28,6 +28,7 @@ type keyMap struct {
 	// views / navigation
 	Focus     key.Binding
 	Filter    key.Binding
+	Sort      key.Binding
 	Refresh   key.Binding
 	Jump      key.Binding
 	Palette   key.Binding
@@ -67,6 +68,7 @@ func defaultKeys() keyMap {
 
 		Focus:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab ←→", "switch pane")),
 		Filter:    key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
+		Sort:      key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "sort by column")),
 		Refresh:   key.NewBinding(key.WithKeys("r", "ctrl+r"), key.WithHelp("r", "refresh")),
 		Jump:      key.NewBinding(key.WithKeys(":"), key.WithHelp(":", "jump to resource")),
 		Palette:   key.NewBinding(key.WithKeys("ctrl+k"), key.WithHelp("^k", "command palette")),
@@ -93,7 +95,7 @@ func (k keyMap) groups() []helpGroup {
 	return []helpGroup{
 		{"Navigation", []key.Binding{k.Up, k.Down, k.HalfUp, k.HalfDown, k.PageUp, k.PageDown, k.Top, k.Bottom}},
 		{"Actions", []key.Binding{k.Enter, k.Describe, k.YAML, k.Logs, k.Edit, k.Shell, k.Restart, k.Delete}},
-		{"Views", []key.Binding{k.Focus, k.Jump, k.Palette, k.Filter, k.Refresh, k.Wide}},
+		{"Views", []key.Binding{k.Focus, k.Jump, k.Palette, k.Filter, k.Sort, k.Refresh, k.Wide}},
 		{"Cluster", []key.Binding{k.Namespace, k.AllNS, k.Context}},
 		{"Logs", []key.Binding{k.Follow}},
 		{"General", []key.Binding{k.Help, k.Back, k.Quit}},

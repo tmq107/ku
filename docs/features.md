@@ -29,6 +29,13 @@ filter shows in the header and clears with `esc`). `w` toggles the wide columns
 that `kubectl get -o wide` would show. Listing across all namespaces (`a`) adds a
 NAMESPACE column.
 
+`S` sorts by a column: it opens a picker of the current columns, and re-picking
+the active column flips direction (a `▲`/`▼` marks the sorted column header).
+Sorting is type-aware, so AGE sorts by duration, CPU/MEM and percentages sort
+numerically, and names sort case-insensitively. Numeric columns default to
+descending (largest/oldest first). Sorting composes with the `/` filter and
+resets when you switch resources.
+
 ## Describe and YAML
 
 `Enter` or `d` opens the object's YAML in a scrollable view (managed fields

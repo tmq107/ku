@@ -35,6 +35,7 @@ show a node shell, and workloads show scale and restart.
 | `:` | jump to any resource (`pods`, `deploy`, `svc`, ...) |
 | `Ctrl+K` | command palette |
 | `/` | filter the current table (`esc` clears) |
+| `S` | sort by a column (re-pick to flip direction) |
 | `r` | refresh now |
 | `w` | toggle wide columns |
 | `n` | switch namespace |

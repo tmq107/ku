@@ -552,6 +552,8 @@ func (a App) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.openEdit()
 	case key.Matches(msg, a.keys.Shell):
 		return a.openShellOrScale()
+	case key.Matches(msg, a.keys.Sort):
+		return a.openSort()
 	case key.Matches(msg, a.keys.Restart):
 		return a.openRestart()
 	case key.Matches(msg, a.keys.Delete):
@@ -682,6 +684,7 @@ func (a App) switchResource(ri k8s.ResourceInfo) (tea.Model, tea.Cmd) {
 	a.focus = focusMain
 	a.sidebar.syncTo(ri.Key())
 	a.table.stopFilter(true)
+	a.table.resetSort() // columns differ per resource
 	a.table.setData(nil)
 	return a.reload()
 }
@@ -988,6 +991,29 @@ func (a App) applyEditedFile(cl *k8s.Client, res k8s.ResourceInfo, ns, name, pat
 	return a, applyEditCmd(cl, res, ns, name, path)
 }
 
+func (a App) openSort() (tea.Model, tea.Cmd) {
+	vis := a.table.visibleCols()
+	if len(vis) == 0 {
+		a.setStatus("nothing to sort yet", true)
+		return a, nil
+	}
+	items := make([]selItem, 0, len(vis)+1)
+	for _, ci := range vis {
+		desc := ""
+		if ci == a.table.sortCol {
+			desc = "active ▲"
+			if a.table.sortDesc {
+				desc = "active ▼"
+			}
+		}
+		items = append(items, selItem{title: a.table.cols[ci].Name, desc: desc, id: itoa(ci)})
+	}
+	items = append(items, selItem{title: "Default order", id: "-1"})
+	a.sel.open(selSort, "Sort by column", "column (re-pick to flip direction)", items, false)
+	a.overlay = overlaySelector
+	return a, nil
+}
+
 func (a App) openScale() (tea.Model, tea.Cmd) {
 	row, ok := a.table.selected()
 	if !ok {
@@ -1189,6 +1215,10 @@ func (a App) applySelection(res selResult) (tea.Model, tea.Cmd) {
 		}
 		t := a.scaleTarget
 		return a, scaleCmd(a.client, t.res, t.ns, t.name, n)
+	case selSort:
+		idx, _ := strconv.Atoi(res.id)
+		a.table.setSort(idx)
+		return a, nil
 	}
 	return a, nil
 }
@@ -1473,7 +1503,7 @@ func (a App) hints() []hint {
 		h = append(h, hint{"R", "restart"})
 	}
 	h = append(h,
-		hint{"e", "edit"}, hint{"x", "del"}, hint{"/", "filter"},
+		hint{"e", "edit"}, hint{"x", "del"}, hint{"/", "filter"}, hint{"S", "sort"},
 		hint{"tab", "nav"}, hint{"^k", "palette"}, hint{"?", "help"}, hint{"q", "quit"})
 	if a.table.filterActive() {
 		h = append([]hint{{"esc", "clear filter"}}, h...)

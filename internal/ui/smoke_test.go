@@ -94,10 +94,20 @@ func TestAppSmoke(t *testing.T) {
 			mustRender(t, m, themeName, size)
 
 			// Walk through key-driven states.
-			for _, seq := range []string{"?", "esc", ":", "po", "esc", "ctrl+k", "esc", "/", "api", "esc", "tab", "j", "k", "left", "right", "h", "l", "j", "k", "g", "G", "w", "a", "a"} {
+			for _, seq := range []string{"?", "esc", ":", "po", "esc", "ctrl+k", "esc", "/", "api", "esc", "tab", "j", "k", "left", "right", "h", "l", "j", "k", "g", "G", "w", "S", "esc", "a", "a"} {
 				m, _ = m.Update(mkKey(seq))
 				mustRender(t, m, themeName, size)
 			}
+
+			// Exercise applied sorting (set, flip direction, clear) and the
+			// header arrow.
+			a = m.(App)
+			a.screen = screenTable
+			for _, ci := range []int{1, 1, 5, -1} {
+				a.table.setSort(ci)
+				mustRender(t, a, themeName, size)
+			}
+			m = a
 
 			// Force the detail and logs screens directly.
 			a = m.(App)
