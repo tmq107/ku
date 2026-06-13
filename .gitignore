@@ -1,0 +1,9 @@
+# Built binary
+/kli
+
+# Editor/OS noise
+*.swp
+.DS_Store
+
+# Local env
+*.env

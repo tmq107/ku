@@ -1,0 +1,175 @@
+package k8s
+
+import (
+	"sort"
+	"strings"
+
+	"k8s.io/apimachinery/pkg/runtime/schema"
+)
+
+// ResourceInfo describes a single API resource kind discovered on the server.
+type ResourceInfo struct {
+	Group      string
+	Version    string
+	Resource   string // plural, e.g. "pods"
+	Kind       string // e.g. "Pod"
+	Singular   string // e.g. "pod"
+	ShortNames []string
+	Namespaced bool
+	Verbs      []string
+}
+
+// GVR returns the GroupVersionResource used by the dynamic client.
+func (r ResourceInfo) GVR() schema.GroupVersionResource {
+	return schema.GroupVersionResource{Group: r.Group, Version: r.Version, Resource: r.Resource}
+}
+
+// Key is the canonical lookup key (the plural resource name, group-qualified
+// when not in the core group) used to identify a resource unambiguously.
+func (r ResourceInfo) Key() string {
+	if r.Group == "" {
+		return r.Resource
+	}
+	return r.Resource + "." + r.Group
+}
+
+// Title is a short human label for the resource shown in the header.
+func (r ResourceInfo) Title() string {
+	return r.Resource
+}
+
+// Can reports whether the resource supports the given verb (e.g. "delete").
+func (r ResourceInfo) Can(verb string) bool {
+	for _, v := range r.Verbs {
+		if v == verb {
+			return true
+		}
+	}
+	return false
+}
+
+// IsPod reports whether this resource is the core Pod type.
+func (r ResourceInfo) IsPod() bool {
+	return r.Group == "" && r.Resource == "pods"
+}
+
+// Scalable reports whether the resource exposes spec.replicas.
+func (r ResourceInfo) Scalable() bool {
+	switch r.Resource {
+	case "deployments", "statefulsets", "replicasets", "replicationcontrollers":
+		return true
+	}
+	return false
+}
+
+// Registry is an in-memory catalog of discovered resources with alias lookup.
+type Registry struct {
+	all   []ResourceInfo
+	byKey map[string]ResourceInfo
+}
+
+// loadRegistry queries discovery for the server's preferred resources and
+// builds the catalog. It tolerates partial discovery failures.
+func (c *Client) loadRegistry() error {
+	lists, err := c.disco.ServerPreferredResources()
+	reg := &Registry{byKey: map[string]ResourceInfo{}}
+
+	for _, list := range lists {
+		if list == nil {
+			continue
+		}
+		gv, perr := schema.ParseGroupVersion(list.GroupVersion)
+		if perr != nil {
+			continue
+		}
+		for _, ar := range list.APIResources {
+			// Skip subresources like pods/log, deployments/scale.
+			if strings.Contains(ar.Name, "/") {
+				continue
+			}
+			if !canList(ar.Verbs) {
+				continue
+			}
+			ri := ResourceInfo{
+				Group:      gv.Group,
+				Version:    gv.Version,
+				Resource:   ar.Name,
+				Kind:       ar.Kind,
+				Singular:   ar.SingularName,
+				ShortNames: ar.ShortNames,
+				Namespaced: ar.Namespaced,
+				Verbs:      ar.Verbs,
+			}
+			reg.add(ri)
+		}
+	}
+
+	sort.Slice(reg.all, func(i, j int) bool {
+		if reg.all[i].Group != reg.all[j].Group {
+			return reg.all[i].Group < reg.all[j].Group
+		}
+		return reg.all[i].Resource < reg.all[j].Resource
+	})
+
+	c.registry = reg
+	return err
+}
+
+func canList(verbs []string) bool {
+	for _, v := range verbs {
+		if v == "list" {
+			return true
+		}
+	}
+	return false
+}
+
+func (reg *Registry) add(ri ResourceInfo) {
+	reg.all = append(reg.all, ri)
+	// The first resource to claim a key wins. ServerPreferredResources returns
+	// the preferred version first, so this keeps the canonical mapping.
+	keys := []string{
+		strings.ToLower(ri.Resource),
+		strings.ToLower(ri.Singular),
+		strings.ToLower(ri.Kind),
+		ri.Key(),
+	}
+	for _, sn := range ri.ShortNames {
+		keys = append(keys, strings.ToLower(sn))
+	}
+	for _, k := range keys {
+		if k == "" {
+			continue
+		}
+		if _, exists := reg.byKey[k]; !exists {
+			reg.byKey[k] = ri
+		}
+	}
+}
+
+// Resolve maps a user query (plural, singular, kind, short name, or
+// group-qualified key) to a resource. Returns false if unknown.
+func (reg *Registry) Resolve(query string) (ResourceInfo, bool) {
+	if reg == nil {
+		return ResourceInfo{}, false
+	}
+	q := strings.ToLower(strings.TrimSpace(query))
+	if ri, ok := reg.byKey[q]; ok {
+		return ri, true
+	}
+	// Allow "resource.group" even if only the plural was indexed.
+	if i := strings.Index(q, "."); i > 0 {
+		if ri, ok := reg.byKey[q[:i]]; ok {
+			return ri, true
+		}
+	}
+	return ResourceInfo{}, false
+}
+
+// All returns the full catalog sorted by group then resource.
+func (reg *Registry) All() []ResourceInfo {
+	if reg == nil {
+		return nil
+	}
+	return reg.all
+}

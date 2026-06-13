@@ -1,0 +1,1347 @@
+package ui
+
+import (
+	"context"
+	"io"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/vt"
+	"github.com/creack/pty"
+
+	"github.com/bjarneo/kli/internal/k8s"
+)
+
+type screen int
+
+const (
+	screenTable screen = iota
+	screenDetail
+	screenLogs
+)
+
+type overlayKind int
+
+const (
+	overlayNone overlayKind = iota
+	overlaySelector
+	overlayHelp
+	overlayConfirm
+	overlayTerm
+)
+
+type focusKind int
+
+const (
+	focusMain focusKind = iota
+	focusSidebar
+)
+
+const (
+	headerHeight = 1
+	footerHeight = 1
+	minSidebar   = 60 // hide the sidebar below this terminal width
+)
+
+// target identifies a single object an action operates on.
+type target struct {
+	res  k8s.ResourceInfo
+	ns   string
+	name string
+}
+
+// App is the root Bubble Tea model.
+type App struct {
+	client *k8s.Client
+	theme  Theme
+	keys   keyMap
+
+	width, height int
+
+	res       k8s.ResourceInfo
+	namespace string // "" means all namespaces
+	lastNS    string // remembered specific namespace for the all-ns toggle
+
+	screen  screen
+	focus   focusKind
+	sidebar sidebar
+	table   tableView
+	detail  detailView
+	logs    logView
+
+	overlay overlayKind
+	sel     selector
+	help    helpView
+	confirm confirmView
+	term    termView
+
+	termSession int
+
+	// pending action context
+	confirmTarget target
+	scaleTarget   target
+	detailTarget  target
+	logTarget     target
+	execTarget    target
+
+	logSession int
+
+	spin      spinner.Model
+	loading   bool
+	status    string
+	statusErr bool
+}
+
+// NewApp builds the root model for a connected client.
+func NewApp(cl *k8s.Client, th Theme) App {
+	a := App{
+		client: cl,
+		theme:  th,
+		keys:   defaultKeys(),
+	}
+	a.sidebar = newSidebar(th, cl.Registry())
+	a.table = newTableView(th)
+	a.detail = newDetailView(th)
+	a.logs = newLogView(th)
+	a.sel = newSelector(th)
+	a.help = newHelpView(th, a.keys)
+	a.term = newTermView(th)
+
+	sp := spinner.New()
+	sp.Spinner = spinner.MiniDot
+	sp.Style = th.Spinner
+	a.spin = sp
+
+	if ri, ok := cl.Registry().Resolve("pods"); ok {
+		a.res = ri
+	} else if all := cl.Registry().All(); len(all) > 0 {
+		a.res = all[0]
+	}
+	a.sidebar.syncTo(a.res.Key())
+	a.namespace = cl.Namespace
+	a.lastNS = cl.Namespace
+	if a.lastNS == "" {
+		a.lastNS = "default"
+	}
+	if cl.DiscoveryWarning != "" {
+		a.setStatus(cl.DiscoveryWarning, true)
+	}
+	return a
+}
+
+func (a App) Init() tea.Cmd {
+	return tea.Batch(a.spin.Tick, loadResourceCmd(a.client, a.res, a.namespace), tickCmd())
+}
+
+func (a App) bodyH() int {
+	h := a.height - headerHeight - footerHeight
+	if h < 1 {
+		return 1
+	}
+	return h
+}
+
+func (a App) sidebarVisible() bool {
+	return a.width >= minSidebar && len(a.sidebar.selectable) > 0
+}
+
+func (a App) sidebarWidth() int {
+	return clamp(a.width/5, 18, 28)
+}
+
+func (a *App) relayout() {
+	bh := a.bodyH()
+	if a.sidebarVisible() {
+		sw := a.sidebarWidth()
+		a.sidebar.setSize(sw-2, bh-2)
+		mainW := a.width - sw
+		a.table.setSize(mainW-2, bh-2)
+	} else {
+		a.table.setSize(a.width, bh)
+	}
+	a.detail.setSize(a.width, bh)
+	a.logs.setSize(a.width, bh)
+}
+
+func (a *App) setStatus(text string, isErr bool) {
+	a.status = text
+	a.statusErr = isErr
+}
+
+// --- Update -----------------------------------------------------------------
+
+func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch m := msg.(type) {
+	case tea.WindowSizeMsg:
+		a.width, a.height = m.Width, m.Height
+		if !a.sidebarVisible() {
+			a.focus = focusMain
+		}
+		a.relayout()
+		if a.overlay == overlayTerm {
+			a.term.setSize(a.width, a.bodyH())
+		}
+		return a, nil
+
+	case tea.KeyMsg:
+		return a.handleKey(m)
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		a.spin, cmd = a.spin.Update(m)
+		if a.loading {
+			return a, cmd
+		}
+		return a, nil
+
+	case tickMsg:
+		cmds := []tea.Cmd{tickCmd()}
+		if a.screen == screenTable && a.overlay == overlayNone && !a.loading {
+			a.loading = true
+			cmds = append(cmds, loadResourceCmd(a.client, a.res, a.namespace), a.spin.Tick)
+		}
+		return a, tea.Batch(cmds...)
+
+	case resourcesLoadedMsg:
+		if m.res.Key() == a.res.Key() && m.ns == a.namespace {
+			a.loading = false
+			if m.err != nil {
+				a.setStatus(trimErr(m.err), true)
+			} else {
+				a.table.setData(m.tbl)
+				if !a.statusErr {
+					a.status = ""
+				}
+			}
+		}
+		return a, nil
+
+	case detailLoadedMsg:
+		// Ignore a stale fetch: only apply if it matches the object currently
+		// being viewed (the user may have navigated away and back to another).
+		if a.screen == screenDetail &&
+			m.res.Key() == a.detailTarget.res.Key() &&
+			m.ns == a.detailTarget.ns && m.name == a.detailTarget.name {
+			if m.err != nil {
+				a.detail.setContent(m.title, "Error: "+m.err.Error())
+			} else {
+				a.detail.setContent(m.title, m.yaml)
+			}
+		}
+		return a, nil
+
+	case namespacesMsg:
+		if a.overlay == overlaySelector && a.sel.kind == selNamespace {
+			if m.err != nil {
+				a.setStatus(trimErr(m.err), true)
+				a.overlay = overlayNone
+				return a, nil
+			}
+			items := []selItem{{title: "all namespaces", desc: "*", id: "*"}}
+			for _, n := range m.names {
+				items = append(items, selItem{title: n, id: n})
+			}
+			a.sel.setItems(items)
+		}
+		return a, nil
+
+	case containersMsg:
+		return a.handleContainers(m)
+
+	case actionDoneMsg:
+		if m.err != nil {
+			a.setStatus(trimErr(m.err), true)
+			return a, nil
+		}
+		a.setStatus(m.text, false)
+		if m.reload {
+			return a.reload()
+		}
+		return a, nil
+
+	case clientReadyMsg:
+		if m.err != nil {
+			a.setStatus(trimErr(m.err), true)
+			return a, nil
+		}
+		return a.adoptClient(m.client)
+
+	case editReadyMsg:
+		if m.err != nil {
+			a.setStatus("edit: "+trimErr(m.err), true)
+			return a, nil
+		}
+		return a.startEdit(m)
+
+	case termTickMsg:
+		if a.overlay == overlayTerm && m.session == a.termSession && !a.term.finished {
+			return a, termTick(m.session)
+		}
+		return a, nil
+
+	case termDoneMsg:
+		return a.handleTermDone(m)
+
+	case logEvent:
+		if m.session != a.logSession || a.screen != screenLogs {
+			return a, nil
+		}
+		if m.err != nil {
+			a.setStatus("logs: "+trimErr(m.err), true)
+			return a, nil
+		}
+		if m.done {
+			return a, nil
+		}
+		a.logs.appendLine(m.line)
+		return a, waitForLog(a.logs.ch)
+
+	case statusMsg:
+		a.setStatus(m.text, m.err)
+		return a, nil
+	}
+
+	return a.routeAux(msg)
+}
+
+// routeAux forwards auxiliary messages (e.g. cursor blink) to the focused input.
+func (a App) routeAux(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if a.overlay == overlaySelector {
+		var cmd tea.Cmd
+		a.sel, _, cmd = a.sel.Update(msg)
+		return a, cmd
+	}
+	if a.screen == screenTable && a.table.filtering {
+		var cmd tea.Cmd
+		a.table, cmd = a.table.Update(msg)
+		return a, cmd
+	}
+	return a, nil
+}
+
+// --- key routing ------------------------------------------------------------
+
+func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// The embedded terminal captures every key (incl. ctrl+c) except detach.
+	if a.overlay == overlayTerm {
+		return a.updateTerm(msg)
+	}
+
+	if msg.String() == "ctrl+c" {
+		a.logs.stop()
+		return a, tea.Quit
+	}
+
+	switch a.overlay {
+	case overlaySelector:
+		return a.updateSelector(msg)
+	case overlayHelp:
+		if key.Matches(msg, a.keys.Help, a.keys.Back) || msg.String() == "q" {
+			a.overlay = overlayNone
+		}
+		return a, nil
+	case overlayConfirm:
+		return a.updateConfirm(msg)
+	}
+
+	switch a.screen {
+	case screenDetail:
+		return a.updateDetail(msg)
+	case screenLogs:
+		return a.updateLogs(msg)
+	default:
+		return a.updateTable(msg)
+	}
+}
+
+func (a App) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Filtering captures all typing until it ends.
+	if a.table.filtering {
+		switch {
+		case key.Matches(msg, a.keys.Back):
+			a.table.stopFilter(true)
+			return a, nil
+		case msg.String() == "enter":
+			a.table.stopFilter(false)
+			return a, nil
+		default:
+			var cmd tea.Cmd
+			a.table, cmd = a.table.Update(msg)
+			return a, cmd
+		}
+	}
+
+	// Global keys, available regardless of which pane has focus.
+	switch {
+	case key.Matches(msg, a.keys.Quit):
+		a.logs.stop()
+		return a, tea.Quit
+	case key.Matches(msg, a.keys.Back):
+		// esc clears an applied filter; otherwise it is a no-op on the table.
+		if a.table.filterActive() {
+			a.table.clearFilter()
+			a.setStatus("filter cleared", false)
+		}
+		return a, nil
+	case key.Matches(msg, a.keys.Help):
+		a.overlay = overlayHelp
+		return a, nil
+	case key.Matches(msg, a.keys.Palette):
+		return a.openPalette()
+	case key.Matches(msg, a.keys.Jump):
+		return a.openResourceJump()
+	case key.Matches(msg, a.keys.Namespace):
+		return a.openNamespacePicker()
+	case key.Matches(msg, a.keys.Context):
+		return a.openContextPicker()
+	case key.Matches(msg, a.keys.AllNS):
+		return a.toggleAllNS()
+	case key.Matches(msg, a.keys.Refresh):
+		return a.reload()
+	case key.Matches(msg, a.keys.Wide):
+		// Affects the always-visible table, so it works from either pane.
+		a.table.toggleWide()
+		return a, nil
+	case key.Matches(msg, a.keys.Focus):
+		if a.sidebarVisible() {
+			a.focus = toggleFocus(a.focus)
+		}
+		return a, nil
+	case key.Matches(msg, a.keys.Filter):
+		a.focus = focusMain
+		a.table.startFilter()
+		return a, nil
+	}
+
+	if a.focus == focusSidebar {
+		return a.updateSidebarKeys(msg)
+	}
+	return a.updateMainKeys(msg)
+}
+
+func (a App) updateSidebarKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, a.keys.Up):
+		a.sidebar.moveUp()
+		return a, nil
+	case key.Matches(msg, a.keys.Down):
+		a.sidebar.moveDown()
+		return a, nil
+	case key.Matches(msg, a.keys.Top):
+		a.sidebar.moveTop()
+		return a, nil
+	case key.Matches(msg, a.keys.Bottom):
+		a.sidebar.moveBottom()
+		return a, nil
+	case key.Matches(msg, a.keys.PageUp, a.keys.HalfUp):
+		a.sidebar.move(-5)
+		return a, nil
+	case key.Matches(msg, a.keys.PageDown, a.keys.HalfDown):
+		a.sidebar.move(5)
+		return a, nil
+	case msg.String() == "enter" || msg.String() == "right" || msg.String() == "l":
+		if ri, ok := a.sidebar.current(); ok {
+			return a.switchResource(ri)
+		}
+		return a, nil
+	}
+	return a, nil
+}
+
+func (a App) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case msg.String() == "left" || msg.String() == "h":
+		if a.sidebarVisible() {
+			a.focus = focusSidebar
+		}
+		return a, nil
+	case key.Matches(msg, a.keys.Enter, a.keys.Describe, a.keys.YAML):
+		return a.openDetail()
+	case key.Matches(msg, a.keys.Logs):
+		return a.openLogs()
+	case key.Matches(msg, a.keys.Edit):
+		return a.openEdit()
+	case key.Matches(msg, a.keys.Shell):
+		return a.openShellOrScale()
+	case key.Matches(msg, a.keys.Delete):
+		return a.openDelete()
+	default:
+		var cmd tea.Cmd
+		a.table, cmd = a.table.Update(msg)
+		return a, cmd
+	}
+}
+
+func (a App) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, a.keys.Back) || msg.String() == "q":
+		a.screen = screenTable
+		return a, nil
+	case key.Matches(msg, a.keys.Edit):
+		return a.editTarget(a.detailTarget)
+	case key.Matches(msg, a.keys.Top):
+		a.detail.vp.GotoTop()
+		return a, nil
+	case key.Matches(msg, a.keys.Bottom):
+		a.detail.vp.GotoBottom()
+		return a, nil
+	default:
+		var cmd tea.Cmd
+		a.detail, cmd = a.detail.Update(msg)
+		return a, cmd
+	}
+}
+
+func (a App) updateLogs(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, a.keys.Back) || msg.String() == "q":
+		a.logs.stop()
+		a.logSession++
+		a.screen = screenTable
+		return a, nil
+	case key.Matches(msg, a.keys.Follow):
+		a.logs.follow = !a.logs.follow
+		if a.logs.follow {
+			a.logs.vp.GotoBottom()
+		}
+		return a, nil
+	case key.Matches(msg, a.keys.Top):
+		a.logs.follow = false
+		a.logs.vp.GotoTop()
+		return a, nil
+	case key.Matches(msg, a.keys.Bottom):
+		a.logs.vp.GotoBottom()
+		return a, nil
+	default:
+		var cmd tea.Cmd
+		a.logs, cmd = a.logs.Update(msg)
+		return a, cmd
+	}
+}
+
+func (a App) updateSelector(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var res selResult
+	var cmd tea.Cmd
+	a.sel, res, cmd = a.sel.Update(msg)
+	switch {
+	case res.canceled:
+		a.overlay = overlayNone
+		return a, nil
+	case res.accepted:
+		a.overlay = overlayNone
+		return a.applySelection(res)
+	}
+	return a, cmd
+}
+
+func (a App) updateTerm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// After the shell exits, any key dismisses the panel.
+	if a.term.finished {
+		a.term.stop()
+		a.overlay = overlayNone
+		a.screen = screenTable
+		return a, nil
+	}
+	// ctrl+\ detaches/cancels without killing kli; everything else goes to the
+	// running program.
+	if msg.String() == "ctrl+\\" {
+		note := "shell detached"
+		if a.term.isEdit {
+			os.Remove(a.term.editPath) // cancelled: discard the unsaved edit
+			note = "edit cancelled"
+		}
+		a.term.stop()
+		a.termSession++
+		a.overlay = overlayNone
+		a.screen = screenTable
+		a.setStatus(note, false)
+		return a, nil
+	}
+	if ti, ok := translateKey(msg); ok && a.term.input != nil {
+		select {
+		case a.term.input <- ti:
+		default: // drop if the input buffer is somehow saturated
+		}
+	}
+	return a, nil
+}
+
+func (a App) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y", "enter":
+		a.overlay = overlayNone
+		t := a.confirmTarget
+		return a, deleteCmd(a.client, t.res, t.ns, t.name)
+	case "n", "N", "esc":
+		a.overlay = overlayNone
+		return a, nil
+	}
+	return a, nil
+}
+
+// --- actions ----------------------------------------------------------------
+
+func (a App) reload() (tea.Model, tea.Cmd) {
+	a.loading = true
+	return a, tea.Batch(loadResourceCmd(a.client, a.res, a.namespace), a.spin.Tick)
+}
+
+func (a App) switchResource(ri k8s.ResourceInfo) (tea.Model, tea.Cmd) {
+	a.res = ri
+	a.screen = screenTable
+	a.focus = focusMain
+	a.sidebar.syncTo(ri.Key())
+	a.table.stopFilter(true)
+	a.table.setData(nil)
+	return a.reload()
+}
+
+func (a App) openDetail() (tea.Model, tea.Cmd) {
+	row, ok := a.table.selected()
+	if !ok {
+		return a, nil
+	}
+	a.detailTarget = target{res: a.res, ns: row.Namespace, name: row.Name}
+	a.screen = screenDetail
+	a.detail.setContent(row.Name, "loading…")
+	return a, loadDetailCmd(a.client, a.res, row.Namespace, row.Name)
+}
+
+func (a App) openLogs() (tea.Model, tea.Cmd) {
+	if !a.res.IsPod() {
+		a.setStatus("logs: switch to pods first", true)
+		return a, nil
+	}
+	row, ok := a.table.selected()
+	if !ok {
+		return a, nil
+	}
+	a.logTarget = target{ns: row.Namespace, name: row.Name}
+	return a, containersCmd(a.client, row.Namespace, row.Name, false)
+}
+
+func (a App) openShellOrScale() (tea.Model, tea.Cmd) {
+	switch {
+	case a.res.IsPod():
+		return a.openShell()
+	case a.res.Scalable():
+		return a.openScale()
+	default:
+		a.setStatus("s: shell needs a pod, scale needs a workload", true)
+		return a, nil
+	}
+}
+
+func (a App) openShell() (tea.Model, tea.Cmd) {
+	row, ok := a.table.selected()
+	if !ok {
+		return a, nil
+	}
+	a.execTarget = target{ns: row.Namespace, name: row.Name}
+	return a, containersCmd(a.client, row.Namespace, row.Name, true)
+}
+
+func (a App) handleContainers(m containersMsg) (tea.Model, tea.Cmd) {
+	wantNS, wantPod := a.logTarget.ns, a.logTarget.name
+	if m.forExec {
+		wantNS, wantPod = a.execTarget.ns, a.execTarget.name
+	}
+	if m.ns != wantNS || m.pod != wantPod {
+		return a, nil
+	}
+	if m.err != nil {
+		a.setStatus(trimErr(m.err), true)
+		return a, nil
+	}
+	if len(m.names) == 0 {
+		a.setStatus("no containers found", true)
+		return a, nil
+	}
+	if len(m.names) == 1 {
+		if m.forExec {
+			return a.startExec(m.ns, m.pod, m.names[0])
+		}
+		return a.startLogs(m.ns, m.pod, m.names[0])
+	}
+
+	items := make([]selItem, len(m.names))
+	for i, n := range m.names {
+		items[i] = selItem{title: n, id: n}
+	}
+	kind := selContainer
+	title := "Logs — " + m.pod
+	if m.forExec {
+		kind = selExecContainer
+		title = "Shell — " + m.pod
+	}
+	a.sel.open(kind, title, "container", items, false)
+	a.overlay = overlaySelector
+	return a, nil
+}
+
+func (a App) startLogs(ns, pod, container string) (tea.Model, tea.Cmd) {
+	a.logs.stop()
+	a.logSession++
+	sess := a.logSession
+
+	a.logs = newLogView(a.theme)
+	a.logs.session = sess
+	a.logs.ns, a.logs.pod, a.logs.cont = ns, pod, container
+	a.logs.title = pod + " › " + container
+	a.logs.setSize(a.width, a.bodyH())
+
+	ch := make(chan logEvent, 256)
+	a.logs.ch = ch
+	ctx, cancel := context.WithCancel(context.Background())
+	a.logs.cancel = cancel
+
+	a.screen = screenLogs
+	go streamLogs(ctx, a.client, ns, pod, container, sess, ch)
+	return a, waitForLog(ch)
+}
+
+func (a App) startExec(ns, pod, container string) (tea.Model, tea.Cmd) {
+	a.term.stop()
+	a.termSession++
+	sess := a.termSession
+
+	cols, rows := termDims(a.width, a.bodyH())
+	em := vt.NewSafeEmulator(cols, rows)
+	q := k8s.NewResizeQueue()
+	q.Set(cols, rows)
+	ctx, cancel := context.WithCancel(context.Background())
+	result := &termResult{done: make(chan struct{})}
+	input := make(chan termInput, 256)
+
+	t := newTermView(a.theme)
+	t.em = em
+	t.cancel = cancel
+	t.closeFn = q.Close
+	t.resize = q.Set
+	t.result = result
+	t.input = input
+	t.session = sess
+	t.cols, t.rows = cols, rows
+	t.title = pod + " › " + container
+	t.started = true
+	a.term = t
+	a.overlay = overlayTerm
+
+	cl := a.client
+	go runTermInput(ctx, em, input)
+	go func() {
+		err := cl.ExecStream(ctx, ns, pod, container, em, em, q)
+		em.Close() // unblock the stream's stdin reader and the input goroutine
+		q.Close()
+		result.err = err
+		close(result.done)
+	}()
+
+	return a, tea.Batch(termTick(sess), waitTermDone(sess, result))
+}
+
+func (a App) openEdit() (tea.Model, tea.Cmd) {
+	row, ok := a.table.selected()
+	if !ok {
+		return a, nil
+	}
+	return a.editTarget(target{res: a.res, ns: row.Namespace, name: row.Name})
+}
+
+func (a App) editTarget(t target) (tea.Model, tea.Cmd) {
+	if t.name == "" {
+		return a, nil
+	}
+	a.setStatus("opening editor…", false)
+	return a, prepareEditCmd(a.client, t.res, t.ns, t.name)
+}
+
+// startEdit opens the object's YAML in $EDITOR (nvim) inside an embedded
+// terminal overlay. When the editor exits, the file is applied automatically.
+func (a App) startEdit(m editReadyMsg) (tea.Model, tea.Cmd) {
+	a.term.stop()
+	a.termSession++
+	sess := a.termSession
+
+	cols, rows := termDims(a.width, a.bodyH())
+	em := vt.NewSafeEmulator(cols, rows)
+	result := &termResult{done: make(chan struct{})}
+	input := make(chan termInput, 256)
+
+	bin, args := editorCommand(m.path)
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	ptmx, err := pty.StartWithSize(cmd, &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)})
+	if err != nil {
+		cancel()
+		os.Remove(m.path)
+		a.setStatus("edit: "+trimErr(err), true)
+		return a, nil
+	}
+
+	t := newTermView(a.theme)
+	t.em = em
+	t.cancel = cancel
+	t.closeFn = func() { _ = ptmx.Close() }
+	t.resize = func(c, r int) { _ = pty.Setsize(ptmx, &pty.Winsize{Rows: uint16(r), Cols: uint16(c)}) }
+	t.result = result
+	t.input = input
+	t.session = sess
+	t.cols, t.rows = cols, rows
+	t.title = "edit " + m.name
+	t.started = true
+	t.isEdit = true
+	t.editPath, t.editOriginal = m.path, m.original
+	t.editRes, t.editNs, t.editName = m.res, m.ns, m.name
+	t.editCl = a.client // capture: applying targets the cluster we read from
+	a.term = t
+	a.overlay = overlayTerm
+
+	go runTermInput(ctx, em, input)
+	go func() { _, _ = io.Copy(ptmx, em) }() // keystrokes -> editor stdin
+	go func() { _, _ = io.Copy(em, ptmx) }() // editor output -> screen
+	go func() {
+		err := cmd.Wait()
+		em.Close()
+		_ = ptmx.Close()
+		result.err = err
+		close(result.done)
+	}()
+
+	return a, tea.Batch(termTick(sess), waitTermDone(sess, result))
+}
+
+// handleTermDone processes the end of an embedded session. Exec sessions show a
+// "press any key" state; edit sessions tear down and apply the file.
+func (a App) handleTermDone(m termDoneMsg) (tea.Model, tea.Cmd) {
+	if m.session != a.termSession {
+		return a, nil
+	}
+	if a.term.isEdit {
+		path, orig := a.term.editPath, a.term.editOriginal
+		res, ns, name, cl := a.term.editRes, a.term.editNs, a.term.editName, a.term.editCl
+		a.term.stop()
+		a.overlay = overlayNone
+		a.screen = screenTable
+		return a.applyEditedFile(cl, res, ns, name, path, orig)
+	}
+	a.term.finished = true
+	a.term.status = "session ended — press any key"
+	if m.err != nil {
+		a.term.status = "ended: " + trimErr(m.err)
+	}
+	return a, nil
+}
+
+// applyEditedFile reads the edited temp file and applies it, skipping unchanged
+// edits, then removes the file.
+func (a App) applyEditedFile(cl *k8s.Client, res k8s.ResourceInfo, ns, name, path, original string) (tea.Model, tea.Cmd) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		os.Remove(path)
+		a.setStatus(trimErr(err), true)
+		return a, nil
+	}
+	if string(data) == original {
+		os.Remove(path)
+		a.setStatus("edit cancelled: no changes", false)
+		return a, nil
+	}
+	if cl == nil {
+		cl = a.client
+	}
+	return a, applyEditCmd(cl, res, ns, name, path)
+}
+
+func (a App) openScale() (tea.Model, tea.Cmd) {
+	row, ok := a.table.selected()
+	if !ok {
+		return a, nil
+	}
+	a.scaleTarget = target{res: a.res, ns: row.Namespace, name: row.Name}
+	a.sel.open(selScale, "Scale "+row.Name, "replicas (number)", nil, true)
+	a.overlay = overlaySelector
+	return a, nil
+}
+
+func (a App) openDelete() (tea.Model, tea.Cmd) {
+	row, ok := a.table.selected()
+	if !ok {
+		return a, nil
+	}
+	ns := row.Namespace
+	loc := ns + "/" + row.Name
+	if ns == "" {
+		loc = row.Name
+	}
+	a.confirmTarget = target{res: a.res, ns: ns, name: row.Name}
+	a.confirm = confirmView{
+		th:      a.theme,
+		title:   "Delete " + a.res.Kind,
+		message: "Delete " + loc + " ?",
+		danger:  true,
+	}
+	a.overlay = overlayConfirm
+	return a, nil
+}
+
+func (a App) toggleAllNS() (tea.Model, tea.Cmd) {
+	if a.namespace == "" {
+		a.namespace = a.lastNS
+	} else {
+		a.lastNS = a.namespace
+		a.namespace = ""
+	}
+	a.persist()
+	return a.reload()
+}
+
+func (a App) adoptClient(cl *k8s.Client) (tea.Model, tea.Cmd) {
+	a.logs.stop()
+	a.logSession++
+	a.client = cl
+	// Rebuild the left nav from the new cluster's catalog: available resource
+	// kinds differ between clusters, so the previous sidebar may be stale.
+	a.sidebar = newSidebar(a.theme, cl.Registry())
+	a.namespace = cl.Namespace
+	a.lastNS = cl.Namespace
+	if a.lastNS == "" {
+		a.lastNS = "default"
+	}
+	a.screen = screenTable
+	a.focus = focusMain
+	a.overlay = overlayNone
+	a.table.stopFilter(true)
+	a.table.setData(nil)
+	if ri, ok := cl.Registry().Resolve(a.res.Resource); ok {
+		a.res = ri
+	} else if ri, ok := cl.Registry().Resolve("pods"); ok {
+		a.res = ri
+	}
+	a.sidebar.syncTo(a.res.Key())
+	// Size the freshly built sidebar/table now; otherwise it stays 0-sized and
+	// renders blank until the next window resize.
+	a.relayout()
+	a.persist()
+	a.setStatus("switched to "+shortContext(cl.ContextName), false)
+	return a.reload()
+}
+
+// --- selector openers -------------------------------------------------------
+
+func (a App) openPalette() (tea.Model, tea.Cmd) {
+	var items []selItem
+
+	// Actions on the selected row come first, so the palette is a real
+	// discovery surface for what you can do right now.
+	if row, ok := a.table.selected(); ok {
+		items = append(items,
+			selItem{title: "Describe " + row.Name, desc: "enter", id: "act:describe"},
+			selItem{title: "View YAML", desc: "y", id: "act:yaml"},
+			selItem{title: "Edit in editor", desc: "e", id: "act:edit"},
+			selItem{title: "Delete " + row.Name, desc: "x", id: "act:delete"},
+		)
+		if a.res.IsPod() {
+			items = append(items,
+				selItem{title: "Logs", desc: "l", id: "act:logs"},
+				selItem{title: "Shell into pod", desc: "s", id: "act:shell"},
+			)
+		}
+		if a.res.Scalable() {
+			items = append(items, selItem{title: "Scale", desc: "s", id: "act:scale"})
+		}
+	}
+
+	items = append(items,
+		selItem{title: "Jump to resource", desc: ":", id: "cmd:jump"},
+		selItem{title: "Filter list", desc: "/", id: "cmd:filter"},
+		selItem{title: "Refresh", desc: "r", id: "cmd:refresh"},
+		selItem{title: "Switch namespace", desc: "n", id: "cmd:namespace"},
+		selItem{title: "All namespaces", desc: "a", id: "cmd:allns"},
+		selItem{title: "Switch context", desc: "c", id: "cmd:context"},
+		selItem{title: "Toggle wide columns", desc: "w", id: "cmd:wide"},
+		selItem{title: "Help", desc: "?", id: "cmd:help"},
+		selItem{title: "Quit", desc: "q", id: "cmd:quit"},
+	)
+	for _, ri := range a.client.Registry().All() {
+		items = append(items, selItem{title: ri.Resource, desc: resourceDesc(ri), id: "res:" + ri.Key()})
+	}
+	a.sel.open(selPalette, "Command palette", "type a command or resource", items, false)
+	a.overlay = overlaySelector
+	return a, nil
+}
+
+func (a App) openResourceJump() (tea.Model, tea.Cmd) {
+	var items []selItem
+	for _, ri := range a.client.Registry().All() {
+		items = append(items, selItem{title: ri.Resource, desc: resourceDesc(ri), id: ri.Key()})
+	}
+	a.sel.open(selResource, "Jump to resource", "pods, deploy, svc…", items, false)
+	a.overlay = overlaySelector
+	return a, nil
+}
+
+func (a App) openNamespacePicker() (tea.Model, tea.Cmd) {
+	a.sel.openLoading(selNamespace, "Switch namespace", "namespace")
+	a.overlay = overlaySelector
+	return a, namespacesCmd(a.client)
+}
+
+func (a App) openContextPicker() (tea.Model, tea.Cmd) {
+	items := make([]selItem, 0, len(a.client.Contexts()))
+	for _, c := range a.client.Contexts() {
+		desc := ""
+		if c == a.client.ContextName {
+			desc = "current"
+		}
+		items = append(items, selItem{title: c, desc: desc, id: c})
+	}
+	a.sel.open(selContext, "Switch context", "context", items, false)
+	a.overlay = overlaySelector
+	return a, nil
+}
+
+func (a App) applySelection(res selResult) (tea.Model, tea.Cmd) {
+	switch a.sel.kind {
+	case selPalette:
+		return a.applyPalette(res.id)
+	case selResource:
+		if ri, ok := a.client.Registry().Resolve(res.id); ok {
+			return a.switchResource(ri)
+		}
+		a.setStatus("unknown resource", true)
+		return a, nil
+	case selNamespace:
+		if res.id == "*" {
+			a.namespace = ""
+		} else {
+			a.namespace = res.id
+			a.lastNS = res.id
+		}
+		a.persist()
+		return a.reload()
+	case selContext:
+		if res.id == a.client.ContextName {
+			return a, nil
+		}
+		a.setStatus("switching context…", false)
+		return a, switchContextCmd(res.id)
+	case selContainer:
+		return a.startLogs(a.logTarget.ns, a.logTarget.name, res.id)
+	case selExecContainer:
+		return a.startExec(a.execTarget.ns, a.execTarget.name, res.id)
+	case selScale:
+		n, err := strconv.Atoi(strings.TrimSpace(res.value))
+		if err != nil || n < 0 {
+			a.setStatus("scale: enter a non-negative number", true)
+			return a, nil
+		}
+		t := a.scaleTarget
+		return a, scaleCmd(a.client, t.res, t.ns, t.name, n)
+	}
+	return a, nil
+}
+
+func (a App) applyPalette(id string) (tea.Model, tea.Cmd) {
+	switch {
+	case strings.HasPrefix(id, "res:"):
+		if ri, ok := a.client.Registry().Resolve(strings.TrimPrefix(id, "res:")); ok {
+			return a.switchResource(ri)
+		}
+	case id == "act:describe", id == "act:yaml":
+		return a.openDetail()
+	case id == "act:edit":
+		return a.openEdit()
+	case id == "act:delete":
+		return a.openDelete()
+	case id == "act:logs":
+		return a.openLogs()
+	case id == "act:shell":
+		return a.openShell()
+	case id == "act:scale":
+		return a.openScale()
+	case id == "cmd:jump":
+		return a.openResourceJump()
+	case id == "cmd:filter":
+		a.focus = focusMain
+		a.table.startFilter()
+		return a, nil
+	case id == "cmd:refresh":
+		return a.reload()
+	case id == "cmd:namespace":
+		return a.openNamespacePicker()
+	case id == "cmd:allns":
+		return a.toggleAllNS()
+	case id == "cmd:context":
+		return a.openContextPicker()
+	case id == "cmd:wide":
+		a.table.toggleWide()
+		return a, nil
+	case id == "cmd:help":
+		a.overlay = overlayHelp
+		return a, nil
+	case id == "cmd:quit":
+		a.logs.stop()
+		return a, tea.Quit
+	}
+	return a, nil
+}
+
+// --- View -------------------------------------------------------------------
+
+func (a App) View() string {
+	if a.width == 0 || a.height == 0 {
+		return "starting kli…"
+	}
+
+	var body string
+	switch a.overlay {
+	case overlayTerm:
+		body = a.term.View(a.width, a.bodyH())
+	case overlayHelp:
+		body = a.help.View(a.width, a.bodyH())
+	case overlaySelector:
+		body = a.sel.View(a.width, a.bodyH())
+	case overlayConfirm:
+		body = a.confirm.View(a.width, a.bodyH())
+	default:
+		switch a.screen {
+		case screenDetail:
+			body = a.detail.View()
+		case screenLogs:
+			body = a.logs.View()
+		default:
+			body = a.tableScreen()
+		}
+	}
+
+	// Guarantee the body is exactly bodyH lines, then width-clamp the whole
+	// frame so no line (header, body, or footer) can wrap and break the fixed
+	// header/body/footer layout.
+	body = lipgloss.NewStyle().MaxHeight(a.bodyH()).Render(body)
+	frame := a.headerView() + "\n" + body + "\n" + a.footerView()
+	return lipgloss.NewStyle().MaxWidth(a.width).Render(frame)
+}
+
+func (a App) tableScreen() string {
+	if !a.sidebarVisible() {
+		return a.table.View()
+	}
+	bh := a.bodyH()
+	sw := a.sidebarWidth()
+	mainW := a.width - sw
+
+	sideStyle := a.theme.PaneInactive
+	mainStyle := a.theme.PaneActive
+	if a.focus == focusSidebar {
+		sideStyle = a.theme.PaneActive
+		mainStyle = a.theme.PaneInactive
+	}
+
+	side := sideStyle.Width(sw - 2).Height(bh - 2).MaxHeight(bh).
+		Render(a.sidebar.View(a.res.Key(), a.focus == focusSidebar))
+	main := mainStyle.Width(mainW - 2).Height(bh - 2).MaxHeight(bh).
+		Render(a.table.View())
+	return lipgloss.JoinHorizontal(lipgloss.Top, side, main)
+}
+
+func (a App) headerView() string {
+	th := a.theme
+	logo := th.Logo.Render("KLI")
+
+	chip := func(k, v string) string {
+		return th.HeaderKey.Render(k+" ") + th.HeaderVal.Render(v)
+	}
+	chips := []string{
+		chip("ctx", shortContext(a.client.ContextName)),
+		chip("ns", a.nsLabel()),
+		chip("res", a.res.Title()),
+	}
+	// Surface an applied filter so a narrowed list never looks like the whole set.
+	if a.table.filterActive() && !a.table.filtering {
+		chips = append(chips, th.HeaderKey.Render("filter ")+th.Warn.Render("/"+truncate(a.table.filterValue(), 24)))
+	}
+
+	right := th.Dim.Render(itoa(a.table.count()) + " items")
+	if a.res.Namespaced && a.namespace == "" {
+		right = th.Dim.Render(itoa(a.table.count()) + " items · all ns")
+	}
+
+	avail := a.width - lipgloss.Width(right) - 2
+	left := logo
+	for _, c := range chips {
+		if lipgloss.Width(left)+2+lipgloss.Width(c) > avail {
+			break
+		}
+		left += "  " + c
+	}
+
+	gap := a.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		return left
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+type hint struct{ key, desc string }
+
+func (a App) footerView() string {
+	th := a.theme
+
+	// The creator credit lives at the far bottom-right; transient status/loading
+	// shows just to its left. Dropped on very narrow terminals to keep hints
+	// usable.
+	credit := ""
+	if a.width >= 40 {
+		credit = th.Dim.Render(creatorHandle)
+	}
+
+	// Cap the status so a long message (e.g. a discovery warning) cannot make
+	// the footer wider than the terminal.
+	statusMax := a.width - lipgloss.Width(credit) - 4
+	if statusMax < 8 {
+		statusMax = 8
+	}
+	statusSeg := ""
+	switch {
+	case a.status != "" && a.statusErr:
+		statusSeg = th.StatusErr.Render("✘ " + truncate(a.status, statusMax-2))
+	case a.status != "":
+		statusSeg = th.StatusOK.Render(truncate(a.status, statusMax))
+	case a.loading:
+		statusSeg = th.Spinner.Render(a.spin.View()) + th.Dim.Render(" loading")
+	}
+
+	right := credit
+	if statusSeg != "" {
+		if credit != "" {
+			right = statusSeg + "  " + credit
+		} else {
+			right = statusSeg
+		}
+	}
+
+	if a.screen == screenTable && a.table.filtering && a.overlay == overlayNone {
+		left := th.FooterKey.Render(a.table.filter.View())
+		hint := "  esc clear · enter apply"
+		if lipgloss.Width(left)+len(hint)+lipgloss.Width(right) <= a.width {
+			left += th.FooterDesc.Render(hint)
+		}
+		return fitFooter(left, right, a.width)
+	}
+
+	avail := a.width - lipgloss.Width(right) - 2
+	return fitFooter(renderHints(th, a.hints(), avail), right, a.width)
+}
+
+// creatorHandle is shown in the footer's bottom-right strip.
+const creatorHandle = "x.com/iamdothash"
+
+func (a App) hints() []hint {
+	switch a.overlay {
+	case overlayTerm:
+		return []hint{{"keys", "→ shell"}, {"ctrl+\\", "detach"}}
+	case overlaySelector:
+		return []hint{{"↑↓", "move"}, {"enter", "select"}, {"esc", "cancel"}}
+	case overlayHelp:
+		return []hint{{"esc", "close"}}
+	case overlayConfirm:
+		return []hint{{"y", "confirm"}, {"n", "cancel"}}
+	}
+	switch a.screen {
+	case screenDetail:
+		return []hint{{"↑↓", "scroll"}, {"e", "edit"}, {"esc", "back"}}
+	case screenLogs:
+		return []hint{{"↑↓", "scroll"}, {"f", "follow"}, {"esc", "back"}}
+	}
+	if a.focus == focusSidebar {
+		return []hint{{"↑↓", "pick"}, {"enter", "open"}, {"tab", "table"}, {":", "jump"}, {"?", "help"}}
+	}
+	h := []hint{
+		{"enter", "describe"}, {"l", "logs"}, {"s", "shell"}, {"e", "edit"},
+		{"x", "del"}, {"/", "filter"}, {"tab", "nav"}, {"^k", "palette"},
+		{"?", "help"}, {"q", "quit"},
+	}
+	if a.table.filterActive() {
+		h = append([]hint{{"esc", "clear filter"}}, h...)
+	}
+	return h
+}
+
+func renderHints(th Theme, hints []hint, avail int) string {
+	var parts []string
+	used := 0
+	for _, h := range hints {
+		add := lipgloss.Width(h.key) + 1 + lipgloss.Width(h.desc)
+		if len(parts) > 0 {
+			add += 3
+		}
+		if used+add > avail {
+			break
+		}
+		used += add
+		parts = append(parts, th.FooterKey.Render(h.key)+" "+th.FooterDesc.Render(h.desc))
+	}
+	return strings.Join(parts, th.FooterDesc.Render(" · "))
+}
+
+func fitFooter(left, right string, width int) string {
+	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+	return left + strings.Repeat(" ", gap) + right
+}
+
+func (a App) nsLabel() string {
+	if !a.res.Namespaced {
+		return "cluster"
+	}
+	if a.namespace == "" {
+		return "all"
+	}
+	return a.namespace
+}
+
+// --- helpers ----------------------------------------------------------------
+
+func toggleFocus(f focusKind) focusKind {
+	if f == focusMain {
+		return focusSidebar
+	}
+	return focusMain
+}
+
+func resourceDesc(ri k8s.ResourceInfo) string {
+	if ri.Group == "" {
+		return ri.Kind
+	}
+	return ri.Kind + " · " + ri.Group
+}
+
+func shortContext(name string) string {
+	if i := strings.Index(name, "/cluster/"); i >= 0 {
+		return name[i+len("/cluster/"):]
+	}
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		return name[i+1:]
+	}
+	return name
+}
+
+func trimErr(err error) string {
+	s := strings.ReplaceAll(err.Error(), "\n", " ")
+	return truncate(s, 120)
+}
+
+// persist remembers the current context and namespace for the next launch.
+func (a App) persist() {
+	saveState(savedState{Context: a.client.ContextName, Namespace: a.namespace})
+}
