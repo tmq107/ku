@@ -21,7 +21,15 @@ NAMESPACE column.
 ## Describe and YAML
 
 `Enter` or `d` opens the object's YAML in a scrollable view (managed fields
-stripped). `g` / `G` jump to top and bottom.
+stripped). `g` / `G` jump to top and bottom. Secret `data` is base64-decoded
+here for readability; editing a Secret still fetches raw base64 so saves stay
+valid.
+
+## Node stats
+
+On the nodes view, kli appends live CPU and memory usage and percentages from
+the metrics API, the same numbers as `kubectl top nodes`. This is best-effort:
+if metrics-server is not installed, the columns are simply omitted.
 
 ## Edit, applied on save
 
@@ -44,10 +52,15 @@ a virtual terminal. It runs `bash` if present, otherwise `sh`, over the cluster'
 exec stream (WebSocket with SPDY fallback, like kubectl). `Ctrl+\` detaches; the
 overlay also closes when you `exit`.
 
-## Scale and delete
+## Scale, restart, delete
 
 `s` on a workload (deployment, statefulset, replicaset) prompts for a replica
-count. `x` deletes the selected object after a confirm.
+count. `R` triggers a rolling restart of a deployment, statefulset, or daemonset
+(the same restartedAt-annotation mechanism kubectl uses), after a confirm. `x`
+deletes the selected object after a confirm.
+
+The bottom bar is context-aware: it shows logs and shell for pods, scale and
+restart for workloads, so the relevant actions are always in view.
 
 ## Namespaces and contexts
 

@@ -164,6 +164,17 @@ func scaleCmd(cl *k8s.Client, res k8s.ResourceInfo, ns, name string, n int) tea.
 	}
 }
 
+func restartCmd(cl *k8s.Client, res k8s.ResourceInfo, ns, name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := opCtx()
+		defer cancel()
+		if err := cl.RolloutRestart(ctx, res, ns, name); err != nil {
+			return actionDoneMsg{err: err}
+		}
+		return actionDoneMsg{text: "restarted " + name, reload: true}
+	}
+}
+
 func switchContextCmd(name string) tea.Cmd {
 	return func() tea.Msg {
 		cl, err := k8s.NewClient(name)

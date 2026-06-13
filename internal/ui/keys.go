@@ -22,6 +22,7 @@ type keyMap struct {
 	Logs     key.Binding
 	Edit     key.Binding
 	Shell    key.Binding
+	Restart  key.Binding
 	Delete   key.Binding
 
 	// views / navigation
@@ -61,6 +62,7 @@ func defaultKeys() keyMap {
 		Logs:     key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "logs")),
 		Edit:     key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit (nvim)")),
 		Shell:    key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "shell / scale")),
+		Restart:  key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "rollout restart")),
 		Delete:   key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "delete")),
 
 		Focus:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab ←→", "switch pane")),
@@ -90,7 +92,7 @@ type helpGroup struct {
 func (k keyMap) groups() []helpGroup {
 	return []helpGroup{
 		{"Navigation", []key.Binding{k.Up, k.Down, k.HalfUp, k.HalfDown, k.PageUp, k.PageDown, k.Top, k.Bottom}},
-		{"Actions", []key.Binding{k.Enter, k.Describe, k.YAML, k.Logs, k.Edit, k.Shell, k.Delete}},
+		{"Actions", []key.Binding{k.Enter, k.Describe, k.YAML, k.Logs, k.Edit, k.Shell, k.Restart, k.Delete}},
 		{"Views", []key.Binding{k.Focus, k.Jump, k.Palette, k.Filter, k.Refresh, k.Wide}},
 		{"Cluster", []key.Binding{k.Namespace, k.AllNS, k.Context}},
 		{"Logs", []key.Binding{k.Follow}},

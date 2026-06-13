@@ -43,6 +43,13 @@ const (
 	focusSidebar
 )
 
+type confirmKind int
+
+const (
+	confirmDelete confirmKind = iota
+	confirmRestart
+)
+
 const (
 	headerHeight = 1
 	footerHeight = 1
@@ -85,6 +92,7 @@ type App struct {
 
 	// pending action context
 	confirmTarget target
+	confirmKind   confirmKind
 	scaleTarget   target
 	detailTarget  target
 	logTarget     target
@@ -469,6 +477,8 @@ func (a App) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.openEdit()
 	case key.Matches(msg, a.keys.Shell):
 		return a.openShellOrScale()
+	case key.Matches(msg, a.keys.Restart):
+		return a.openRestart()
 	case key.Matches(msg, a.keys.Delete):
 		return a.openDelete()
 	default:
@@ -577,6 +587,9 @@ func (a App) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y", "Y", "enter":
 		a.overlay = overlayNone
 		t := a.confirmTarget
+		if a.confirmKind == confirmRestart {
+			return a, restartCmd(a.client, t.res, t.ns, t.name)
+		}
 		return a, deleteCmd(a.client, t.res, t.ns, t.name)
 	case "n", "N", "esc":
 		a.overlay = overlayNone
@@ -882,11 +895,38 @@ func (a App) openDelete() (tea.Model, tea.Cmd) {
 		loc = row.Name
 	}
 	a.confirmTarget = target{res: a.res, ns: ns, name: row.Name}
+	a.confirmKind = confirmDelete
 	a.confirm = confirmView{
 		th:      a.theme,
 		title:   "Delete " + a.res.Kind,
 		message: "Delete " + loc + " ?",
 		danger:  true,
+	}
+	a.overlay = overlayConfirm
+	return a, nil
+}
+
+func (a App) openRestart() (tea.Model, tea.Cmd) {
+	if !a.res.Restartable() {
+		a.setStatus("restart: deployments, statefulsets, daemonsets only", true)
+		return a, nil
+	}
+	row, ok := a.table.selected()
+	if !ok {
+		return a, nil
+	}
+	ns := row.Namespace
+	loc := ns + "/" + row.Name
+	if ns == "" {
+		loc = row.Name
+	}
+	a.confirmTarget = target{res: a.res, ns: ns, name: row.Name}
+	a.confirmKind = confirmRestart
+	a.confirm = confirmView{
+		th:      a.theme,
+		title:   "Restart " + a.res.Kind,
+		message: "Rollout restart " + loc + " ?",
+		danger:  false,
 	}
 	a.overlay = overlayConfirm
 	return a, nil
@@ -956,6 +996,9 @@ func (a App) openPalette() (tea.Model, tea.Cmd) {
 		}
 		if a.res.Scalable() {
 			items = append(items, selItem{title: "Scale", desc: "s", id: "act:scale"})
+		}
+		if a.res.Restartable() {
+			items = append(items, selItem{title: "Rollout restart", desc: "R", id: "act:restart"})
 		}
 	}
 
@@ -1067,6 +1110,8 @@ func (a App) applyPalette(id string) (tea.Model, tea.Cmd) {
 		return a.openShell()
 	case id == "act:scale":
 		return a.openScale()
+	case id == "act:restart":
+		return a.openRestart()
 	case id == "cmd:jump":
 		return a.openResourceJump()
 	case id == "cmd:filter":
@@ -1264,11 +1309,21 @@ func (a App) hints() []hint {
 	if a.focus == focusSidebar {
 		return []hint{{"↑↓", "pick"}, {"enter", "open"}, {"tab", "table"}, {":", "jump"}, {"?", "help"}}
 	}
-	h := []hint{
-		{"enter", "describe"}, {"l", "logs"}, {"s", "shell"}, {"e", "edit"},
-		{"x", "del"}, {"/", "filter"}, {"tab", "nav"}, {"^k", "palette"},
-		{"?", "help"}, {"q", "quit"},
+
+	// Context-aware: surface the actions that apply to the current resource.
+	h := []hint{{"enter", "describe"}}
+	switch {
+	case a.res.IsPod():
+		h = append(h, hint{"l", "logs"}, hint{"s", "shell"})
+	case a.res.Scalable():
+		h = append(h, hint{"s", "scale"})
 	}
+	if a.res.Restartable() {
+		h = append(h, hint{"R", "restart"})
+	}
+	h = append(h,
+		hint{"e", "edit"}, hint{"x", "del"}, hint{"/", "filter"},
+		hint{"tab", "nav"}, hint{"^k", "palette"}, hint{"?", "help"}, hint{"q", "quit"})
 	if a.table.filterActive() {
 		h = append([]hint{{"esc", "clear filter"}}, h...)
 	}

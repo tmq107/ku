@@ -22,7 +22,11 @@ can run any of these and jump to any resource.
 | `l` | logs (pods); `f` toggles follow |
 | `e` | edit in `$EDITOR`, applied on save |
 | `s` | shell into a pod, or scale a workload |
+| `R` | rollout restart (deployments, statefulsets, daemonsets) |
 | `x` | delete (with confirm) |
+
+The bottom bar adapts to the selected resource: pods show logs and shell,
+workloads show scale and restart.
 
 ## Views and cluster
 
