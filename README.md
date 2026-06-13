@@ -4,7 +4,7 @@ A fast, keyboard-driven Kubernetes TUI. Browse any resource, read and edit
 objects, follow logs, and open a shell in a pod, without leaving the terminal.
 Inspired by k9s, Lens, and lazygit.
 
-kli uses your default kubeconfig and the current context. No config required.
+https://github.com/user-attachments/assets/48756c6b-00ae-470d-8fb5-3f93ecbd46df
 
 ## Install
 
