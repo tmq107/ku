@@ -1624,6 +1624,7 @@ func (a App) View() string {
 	// header/body/footer layout.
 	body = lipgloss.NewStyle().MaxHeight(a.bodyH()).Render(body)
 	frame := a.headerView() + "\n" + body + "\n" + a.footerView()
+	frame = a.renderNotification(frame)
 	frame = lipgloss.NewStyle().MaxWidth(a.width).Render(frame)
 	// Equal gutter on every side. Padding adds 2*gutter cols and rows back, so
 	// the result is exactly the full terminal size.
@@ -1747,11 +1748,12 @@ func (a App) footerView() string {
 	if statusMax < 8 {
 		statusMax = 8
 	}
+	showStatus := a.status != "" && !a.notificationVisible()
 	statusSeg := ""
 	switch {
-	case a.status != "" && a.statusErr:
+	case showStatus && a.statusErr:
 		statusSeg = th.StatusErr.Render("✘ " + truncate(a.status, statusMax-2))
-	case a.status != "":
+	case showStatus:
 		statusSeg = th.StatusOK.Render(truncate(a.status, statusMax))
 	case a.loading:
 		statusSeg = th.Spinner.Render(a.spin.View()) + th.Dim.Render(" loading")
