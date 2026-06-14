@@ -355,6 +355,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a.adoptClient(m.client)
 
 	case editReadyMsg:
+		if m.client != a.client {
+			if m.path != "" {
+				os.Remove(m.path)
+			}
+			return a, nil
+		}
 		if m.err != nil {
 			a.setStatus("edit: "+trimErr(m.err), true)
 			return a, nil
@@ -1277,7 +1283,7 @@ func (a App) startEdit(m editReadyMsg) (tea.Model, tea.Cmd) {
 	t.isEdit = true
 	t.editPath, t.editOriginal = m.path, m.original
 	t.editRes, t.editNs, t.editName = m.res, m.ns, m.name
-	t.editCl = a.client // capture: applying targets the cluster we read from
+	t.editCl = m.client // capture: applying targets the cluster we read from
 	a.term = t
 	a.overlay = overlayTerm
 

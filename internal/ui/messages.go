@@ -92,6 +92,7 @@ type cockpitLoadedMsg struct {
 }
 
 type editReadyMsg struct {
+	client   *k8s.Client
 	path     string
 	original string
 	res      k8s.ResourceInfo
@@ -301,19 +302,19 @@ func prepareEditCmd(cl *k8s.Client, res k8s.ResourceInfo, ns, name string) tea.C
 		defer cancel()
 		y, err := cl.GetYAML(ctx, res, ns, name, false) // raw base64 for round-trip edits
 		if err != nil {
-			return editReadyMsg{err: err}
+			return editReadyMsg{client: cl, err: err}
 		}
 		safe := strings.NewReplacer("/", "_", " ", "_").Replace(name)
 		f, err := os.CreateTemp("", "kli-"+safe+"-*.yaml")
 		if err != nil {
-			return editReadyMsg{err: err}
+			return editReadyMsg{client: cl, err: err}
 		}
 		if _, err := f.WriteString(y); err != nil {
 			f.Close()
-			return editReadyMsg{err: err}
+			return editReadyMsg{client: cl, err: err}
 		}
 		f.Close()
-		return editReadyMsg{path: f.Name(), original: y, res: res, ns: ns, name: name}
+		return editReadyMsg{client: cl, path: f.Name(), original: y, res: res, ns: ns, name: name}
 	}
 }
 

@@ -42,6 +42,31 @@ func TestCancelEditRemovesTempFile(t *testing.T) {
 	}
 }
 
+func TestStaleEditReadyRemovesTempFile(t *testing.T) {
+	path := writeTempEdit(t, "changed")
+	current := &k8s.Client{}
+	stale := &k8s.Client{}
+	app := App{client: current, theme: PickTheme("ansi")}
+
+	model, cmd := app.Update(editReadyMsg{
+		client: stale,
+		path:   path,
+		res:    k8s.ResourceInfo{Resource: "pods", Kind: "Pod", Namespaced: true},
+		ns:     "default",
+		name:   "api",
+	})
+	got := model.(App)
+	if cmd != nil {
+		t.Fatal("stale edit returned a command")
+	}
+	if got.overlay != overlayNone {
+		t.Fatalf("overlay = %v, want overlayNone", got.overlay)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("stale edit temp file still exists: err=%v", err)
+	}
+}
+
 func writeTempEdit(t *testing.T, content string) string {
 	t.Helper()
 	f, err := os.CreateTemp("", "kli-edit-confirm-*.yaml")
