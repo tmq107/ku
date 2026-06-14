@@ -20,7 +20,7 @@ var version = "dev"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "upgrade" {
-		if err := upgrade.Run(version); err != nil {
+		if err := runUpgrade(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
@@ -70,6 +70,19 @@ func main() {
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
+	}
+}
+
+func runUpgrade(args []string) error {
+	if len(args) == 0 {
+		return upgrade.Run(version)
+	}
+	switch args[0] {
+	case "--help", "-h", "help":
+		fmt.Println("usage: kli upgrade")
+		return nil
+	default:
+		return fmt.Errorf("usage: kli upgrade")
 	}
 }
 
