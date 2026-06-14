@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -150,8 +151,7 @@ func (c *Client) ClusterStats(ctx context.Context) (*ClusterOverview, error) {
 		o.Deployments = len(deps.Items)
 		for i := range deps.Items {
 			d := &deps.Items[i]
-			// Ready when fully available, or scaled to zero (healthy).
-			if d.Status.Replicas == 0 || d.Status.ReadyReplicas >= d.Status.Replicas {
+			if deploymentReady(d) {
 				o.DeploymentsReady++
 			}
 		}
@@ -161,6 +161,14 @@ func (c *Client) ClusterStats(ctx context.Context) (*ClusterOverview, error) {
 
 	wg.Wait()
 	return o, nil
+}
+
+func deploymentReady(d *appsv1.Deployment) bool {
+	desired := int32(1)
+	if d.Spec.Replicas != nil {
+		desired = *d.Spec.Replicas
+	}
+	return desired == 0 || d.Status.ReadyReplicas >= desired
 }
 
 func nodeReady(n *corev1.Node) bool {
