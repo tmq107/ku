@@ -81,12 +81,15 @@ func (c cockpitView) View(width, height int) string {
 	var top string
 	topH := clamp(height/2, 5, 9)
 	if width >= 72 {
-		w1 := width / 3
-		w2 := width / 3
-		w3 := width - w1 - w2
+		panelW := width - 2*cockpitPanelGap
+		w1 := panelW / 3
+		w2 := panelW / 3
+		w3 := panelW - w1 - w2
 		top = lipgloss.JoinHorizontal(lipgloss.Top,
 			c.panel("Cluster", cluster, w1, topH),
+			strings.Repeat(" ", cockpitPanelGap),
 			c.panel("Resources", resources, w2, topH),
+			strings.Repeat(" ", cockpitPanelGap),
 			c.panel("Workloads", workloads, w3, topH),
 		)
 	} else {
@@ -98,13 +101,13 @@ func (c cockpitView) View(width, height int) string {
 		topH = lipgloss.Height(top)
 	}
 
-	warnH := height - topH - cockpitPanelGap
+	warnH := height - topH
 	if warnH < 3 {
 		warnH = 3
 	}
 	warnings := c.panel("Recent warnings", c.warningLines(paneContentWidth(width)), width, warnH)
 
-	return clampBlock(lipgloss.JoinVertical(lipgloss.Left, top, "", warnings), width, height)
+	return clampBlock(lipgloss.JoinVertical(lipgloss.Left, top, warnings), width, height)
 }
 
 func (c cockpitView) warningLines(w int) []string {
