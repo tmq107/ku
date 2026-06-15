@@ -47,8 +47,33 @@ Press `?` for help and `Ctrl+K` for the command palette.
 `kli` reads an optional config file from `~/.config/kli/config.yaml` for sidebar
 customization and stores session state in `~/.config/kli/state.json`.
 
-See [Configuration](docs/configuration.md) for `kli config init`, sidebar
-examples, resource names, and opt-in resources.
+### Add custom resources (CRDs) to the sidebar
+
+The sidebar lists common built-in resources by default. CRDs are not shown until
+you add them. Seed the config, then edit the `sidebar:` list:
+
+```bash
+kli config init     # write ~/.config/kli/config.yaml with the defaults
+kli config path     # print the config file location
+```
+
+Add an item under any section (or a new one). The `resource` field accepts a
+plural, singular, kind, short name, or group-qualified key. Use the
+group-qualified form (`<plural>.<group>`) to avoid ambiguity:
+
+```yaml
+sidebar:
+  - section: CRDs
+    items:
+      - { label: ScaledObjects, resource: scaledobjects.keda.sh }
+      - { label: Certificates, resource: certificates.cert-manager.io }
+      - { label: HPAs, resource: horizontalpodautoscalers }
+```
+
+Restart `kli` to apply the change. Resources your cluster does not expose are
+dropped, and empty sections are hidden.
+
+See [Configuration](docs/configuration.md) for the full reference.
 
 ## Highlights
 
