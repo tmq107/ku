@@ -76,6 +76,20 @@ func notificationBox(th Theme, text string, isErr bool, maxWidth, maxHeight int)
 		Render(strings.Join(lines, "\n"))
 }
 
+// overlayCenter composites box centered over base, leaving the rest of base
+// visible. Modal overlays use it to float above the current screen.
+func overlayCenter(base, box string, width, height int) string {
+	x := (width - lipgloss.Width(box)) / 2
+	y := (height - lipgloss.Height(box)) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	return overlayBlock(base, box, x, y, width, height)
+}
+
 func overlayBlock(base, overlay string, x, y, width, height int) string {
 	baseLines := strings.Split(clampBlock(base, width, height), "\n")
 

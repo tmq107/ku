@@ -127,5 +127,5 @@ func (h helpView) View(width, height int) string {
 	content := title + hint + spacer + grid
 
 	box := border.Render(content)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
+	return box
 }

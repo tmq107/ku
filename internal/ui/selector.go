@@ -255,7 +255,7 @@ func (s selector) View(width, height int) string {
 	}
 
 	box := border.Width(boxW).Render(b.String())
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
+	return box
 }
 
 func (s selector) renderItem(it selItem, width int, selected bool) string {

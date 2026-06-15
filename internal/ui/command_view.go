@@ -4,8 +4,6 @@ import (
 	"strconv"
 	"strings"
 
-	"charm.land/lipgloss/v2"
-
 	"github.com/bjarneo/kli/internal/k8s"
 )
 
@@ -63,7 +61,7 @@ func (c commandView) View(width, height int) string {
 	body := c.th.ModalTitle.Render("kubectl command") + " " + c.th.Dim.Render("esc to close") +
 		"\n\n" + strings.Join(lines, "\n")
 	box := c.th.ModalBorder.Width(boxW).Render(body)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
+	return box
 }
 
 func (a App) kubectlCommand() string {

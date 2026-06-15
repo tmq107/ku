@@ -41,5 +41,5 @@ func (c confirmView) View(width, height int) string {
 		boxW = 8
 	}
 	box := border.Width(boxW).Render(body)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box)
+	return box
 }

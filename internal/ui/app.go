@@ -1780,31 +1780,22 @@ func (a App) render() string {
 		return "starting kli…"
 	}
 
-	var body string
+	body := a.screenBody()
+
+	// Modal overlays float on top of the current screen rather than replacing it,
+	// so the view you came from stays visible behind them. The embedded terminal
+	// is the exception: it takes over the body fully.
 	switch a.overlay {
 	case overlayTerm:
 		body = a.term.View(a.width, a.bodyH())
 	case overlayHelp:
-		body = a.help.View(a.width, a.bodyH())
+		body = overlayCenter(body, a.help.View(a.width, a.bodyH()), a.width, a.bodyH())
 	case overlaySelector:
-		body = a.sel.View(a.width, a.bodyH())
+		body = overlayCenter(body, a.sel.View(a.width, a.bodyH()), a.width, a.bodyH())
 	case overlayConfirm:
-		body = a.confirm.View(a.width, a.bodyH())
+		body = overlayCenter(body, a.confirm.View(a.width, a.bodyH()), a.width, a.bodyH())
 	case overlayCommand:
-		body = a.command.View(a.width, a.bodyH())
-	default:
-		switch a.screen {
-		case screenConfig:
-			body = a.renderPane(a.theme.PaneActive, a.config.View(), a.width, a.bodyH())
-		case screenDetail:
-			body = a.renderPane(a.theme.PaneActive, a.detail.View(), a.width, a.bodyH())
-		case screenLogs:
-			body = a.renderPane(a.theme.PaneActive, a.logs.View(), a.width, a.bodyH())
-		case screenCockpit:
-			body = a.cockpitScreen()
-		default:
-			body = a.tableScreen()
-		}
+		body = overlayCenter(body, a.command.View(a.width, a.bodyH()), a.width, a.bodyH())
 	}
 
 	// Guarantee the body is exactly bodyH lines, then width-clamp the whole
@@ -1817,6 +1808,23 @@ func (a App) render() string {
 	// Equal gutter on every side. Padding adds 2*gutter cols and rows back, so
 	// the result is exactly the full terminal size.
 	return lipgloss.NewStyle().Padding(a.gutter, a.gutter).Render(frame)
+}
+
+// screenBody renders the active screen's body with no overlay. Overlays
+// composite on top of this so the current view stays visible behind them.
+func (a App) screenBody() string {
+	switch a.screen {
+	case screenConfig:
+		return a.renderPane(a.theme.PaneActive, a.config.View(), a.width, a.bodyH())
+	case screenDetail:
+		return a.renderPane(a.theme.PaneActive, a.detail.View(), a.width, a.bodyH())
+	case screenLogs:
+		return a.renderPane(a.theme.PaneActive, a.logs.View(), a.width, a.bodyH())
+	case screenCockpit:
+		return a.cockpitScreen()
+	default:
+		return a.tableScreen()
+	}
 }
 
 func (a App) activeNavKey() string {
