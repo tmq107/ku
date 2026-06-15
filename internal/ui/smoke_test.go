@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/vt"
 
 	"github.com/bjarneo/kli/internal/k8s"
@@ -45,22 +45,22 @@ func fakeOverview() *k8s.ClusterOverview {
 	}
 }
 
-func mkKey(s string) tea.KeyMsg {
+func mkKey(s string) tea.KeyPressMsg {
 	switch s {
 	case "esc":
-		return tea.KeyMsg{Type: tea.KeyEsc}
+		return tea.KeyPressMsg{Code: tea.KeyEsc}
 	case "enter":
-		return tea.KeyMsg{Type: tea.KeyEnter}
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	case "ctrl+k":
-		return tea.KeyMsg{Type: tea.KeyCtrlK}
+		return tea.KeyPressMsg{Code: 'k', Mod: tea.ModCtrl}
 	case "tab":
-		return tea.KeyMsg{Type: tea.KeyTab}
+		return tea.KeyPressMsg{Code: tea.KeyTab}
 	case "left":
-		return tea.KeyMsg{Type: tea.KeyLeft}
+		return tea.KeyPressMsg{Code: tea.KeyLeft}
 	case "right":
-		return tea.KeyMsg{Type: tea.KeyRight}
+		return tea.KeyPressMsg{Code: tea.KeyRight}
 	default:
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+		return tea.KeyPressMsg{Text: s, Code: tea.KeyExtended}
 	}
 }
 
@@ -315,7 +315,7 @@ func mustRender(t *testing.T, m tea.Model, theme string, size [2]int) {
 			t.Fatalf("panic rendering theme=%s size=%v: %v", theme, size, r)
 		}
 	}()
-	out := m.View()
+	out := m.View().Content
 	if out == "" {
 		t.Fatalf("empty view theme=%s size=%v", theme, size)
 	}

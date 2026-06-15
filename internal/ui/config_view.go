@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	apiresource "k8s.io/apimachinery/pkg/api/resource"
 
@@ -27,15 +27,15 @@ type configView struct {
 }
 
 func newConfigView(th Theme) configView {
-	return configView{th: th, vp: viewport.New(0, 0), label: "config"}
+	return configView{th: th, vp: viewport.New(), label: "config"}
 }
 
 func (c *configView) setSize(w, h int) {
 	if h < 1 {
 		h = 1
 	}
-	c.vp.Width = w
-	c.vp.Height = h - 1
+	c.vp.SetWidth(w)
+	c.vp.SetHeight(h - 1)
 }
 
 func (c *configView) setMessage(title, body string) {
@@ -48,7 +48,7 @@ func (c *configView) setMessage(title, body string) {
 func (c *configView) setObject(res k8s.ResourceInfo, title string, obj map[string]interface{}, usage *k8s.PodUsage) {
 	c.title = title
 	c.label = strings.ToLower(res.Kind) + " config"
-	c.vp.SetContent(renderConfig(c.th, res, obj, c.vp.Width, usage))
+	c.vp.SetContent(renderConfig(c.th, res, obj, c.vp.Width(), usage))
 	c.vp.GotoTop()
 }
 
@@ -61,7 +61,7 @@ func (c configView) Update(msg tea.Msg) (configView, tea.Cmd) {
 func (c configView) View() string {
 	title := c.th.ModalTitle.Render(c.title)
 	right := c.th.Dim.Render(c.label + " · " + scrollPercent(c.vp.ScrollPercent()))
-	return spread(title, right, c.vp.Width) + "\n" + c.vp.View()
+	return spread(title, right, c.vp.Width()) + "\n" + c.vp.View()
 }
 
 type configRow struct{ key, value string }

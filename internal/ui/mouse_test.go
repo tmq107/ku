@@ -3,7 +3,7 @@ package ui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func TestTableMouseHitTesting(t *testing.T) {
@@ -33,19 +33,19 @@ func TestAppMouseSelectsTableRowsAndSortsHeaders(t *testing.T) {
 	app.relayout()
 	app.table.setData(fakeTable())
 
-	m, _ := app.Update(tea.MouseMsg{X: 2, Y: 4, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m, _ := app.Update(tea.MouseClickMsg{X: 2, Y: 4, Button: tea.MouseLeft})
 	app = m.(App)
 	if app.table.cursor != 1 {
 		t.Fatalf("mouse row click selected cursor %d; want 1", app.table.cursor)
 	}
 
-	m, _ = app.Update(tea.MouseMsg{X: 2, Y: 2, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	m, _ = app.Update(tea.MouseClickMsg{X: 2, Y: 2, Button: tea.MouseLeft})
 	app = m.(App)
 	if app.table.sortCol != 0 {
 		t.Fatalf("mouse header click sortCol = %d; want 0", app.table.sortCol)
 	}
 
-	m, _ = app.Update(tea.MouseMsg{X: 2, Y: 4, Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp})
+	m, _ = app.Update(tea.MouseWheelMsg{X: 2, Y: 4, Button: tea.MouseWheelUp})
 	app = m.(App)
 	if app.table.cursor != 0 {
 		t.Fatalf("mouse wheel selected cursor %d; want 0", app.table.cursor)

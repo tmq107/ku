@@ -1,8 +1,8 @@
 package ui
 
 import (
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 )
 
 // detailView shows a single object's YAML in a scrollable viewport with
@@ -14,15 +14,15 @@ type detailView struct {
 }
 
 func newDetailView(th Theme) detailView {
-	return detailView{th: th, vp: viewport.New(0, 0)}
+	return detailView{th: th, vp: viewport.New()}
 }
 
 func (d *detailView) setSize(w, h int) {
 	if h < 1 {
 		h = 1
 	}
-	d.vp.Width = w
-	d.vp.Height = h - 1 // leave a row for the title
+	d.vp.SetWidth(w)
+	d.vp.SetHeight(h - 1) // leave a row for the title
 }
 
 // setMessage shows plain (unhighlighted) text such as "loading…" or an error.
@@ -48,7 +48,7 @@ func (d detailView) Update(msg tea.Msg) (detailView, tea.Cmd) {
 func (d detailView) View() string {
 	title := d.th.ModalTitle.Render(d.title)
 	pct := d.th.Dim.Render(scrollPercent(d.vp.ScrollPercent()))
-	return spread(title, pct, d.vp.Width) + "\n" + d.vp.View()
+	return spread(title, pct, d.vp.Width()) + "\n" + d.vp.View()
 }
 
 func scrollPercent(f float64) string {

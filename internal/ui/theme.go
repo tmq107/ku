@@ -1,26 +1,27 @@
 package ui
 
 import (
+	"image/color"
 	"os"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // Palette is the small set of semantic colors every style is derived from.
 type Palette struct {
-	Accent   lipgloss.TerminalColor // primary accent: logo, titles, active keys
-	Accent2  lipgloss.TerminalColor // secondary accent
-	Fg       lipgloss.TerminalColor // body text ("" / NoColor = terminal default)
-	Muted    lipgloss.TerminalColor // hints, dim text
-	Border   lipgloss.TerminalColor // box and rule borders
-	Good     lipgloss.TerminalColor // success / running
-	Warn     lipgloss.TerminalColor // warning / pending
-	Bad      lipgloss.TerminalColor // error / failed
-	SelFg    lipgloss.TerminalColor // selected row foreground
-	SelBg    lipgloss.TerminalColor // selected row background
-	HeaderBg lipgloss.TerminalColor // logo chip background
-	LogoFg   lipgloss.TerminalColor // logo chip text
+	Accent   color.Color // primary accent: logo, titles, active keys
+	Accent2  color.Color // secondary accent
+	Fg       color.Color // body text ("" / NoColor = terminal default)
+	Muted    color.Color // hints, dim text
+	Border   color.Color // box and rule borders
+	Good     color.Color // success / running
+	Warn     color.Color // warning / pending
+	Bad      color.Color // error / failed
+	SelFg    color.Color // selected row foreground
+	SelBg    color.Color // selected row background
+	HeaderBg color.Color // logo chip background
+	LogoFg   color.Color // logo chip text
 
 	// ReverseSel highlights the selected row with reverse video instead of an
 	// explicit background, so it tracks the terminal's own palette. Used by the
@@ -189,6 +190,6 @@ func PickTheme(name string) Theme {
 	case "tokyonight", "tokyo-night", "tokyo":
 		return NewTheme("tokyonight", tokyoNightPalette())
 	default:
-		return NewTheme("ansi", ansiPalette(lipgloss.HasDarkBackground()))
+		return NewTheme("ansi", ansiPalette(lipgloss.HasDarkBackground(os.Stdin, os.Stdout)))
 	}
 }

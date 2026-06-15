@@ -1,7 +1,7 @@
 package ui
 
 import (
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/bjarneo/kli/internal/k8s"
 )
@@ -67,7 +67,7 @@ func Run(opts Options) error {
 		}
 	}
 
-	p := tea.NewProgram(app, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(app)
 	_, err = p.Run()
 	return err
 }

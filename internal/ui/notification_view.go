@@ -3,7 +3,7 @@ package ui
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -72,7 +72,7 @@ func notificationBox(th Theme, text string, isErr bool, maxWidth, maxHeight int)
 		BorderForeground(color).
 		Foreground(th.P.Fg).
 		Padding(0, 1).
-		Width(contentW + 2).
+		Width(contentW + 4).
 		Render(strings.Join(lines, "\n"))
 }
 

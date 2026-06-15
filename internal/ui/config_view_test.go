@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/bjarneo/kli/internal/k8s"
 )
 
@@ -217,10 +219,11 @@ func TestRenderConfigSeparatesLongSecretKeys(t *testing.T) {
 	}
 
 	out := renderConfig(th, res, obj, 72, nil)
-	if strings.Contains(out, "POSTGRES_REPLICATION_PASSWORDreplicatorpass") {
+	plain := ansi.Strip(out)
+	if strings.Contains(plain, "POSTGRES_REPLICATION_PASSWORDreplicatorpass") {
 		t.Fatalf("long secret key was not separated from value:\n%s", out)
 	}
-	if !strings.Contains(out, "  replicatorpass") {
+	if !strings.Contains(plain, "  replicatorpass") {
 		t.Fatalf("decoded value missing expected separation:\n%s", out)
 	}
 }

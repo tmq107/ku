@@ -4,9 +4,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/cursor"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/bjarneo/kli/internal/k8s"
@@ -55,7 +54,9 @@ func newTableView(th Theme) tableView {
 	fi := textinput.New()
 	fi.Prompt = "/"
 	fi.Placeholder = "filter"
-	fi.Cursor.SetMode(cursor.CursorStatic)
+	styles := fi.Styles()
+	styles.Cursor.Blink = false
+	fi.SetStyles(styles)
 	return tableView{th: th, filter: fi, sortCol: -1}
 }
 
@@ -66,7 +67,7 @@ func (v *tableView) setSize(w, h int) {
 	}
 	v.height = h
 	if fw := w - 8; fw > 4 {
-		v.filter.Width = fw // bound the filter input so it can't overflow
+		v.filter.SetWidth(fw) // bound the filter input so it can't overflow
 	}
 	v.rebuild()
 }

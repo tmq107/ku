@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
 )
@@ -17,10 +17,10 @@ type termInput struct {
 	isKey bool
 }
 
-// specialKeys maps Bubble Tea key types to virtual-terminal key codes so the
+// specialKeys maps Bubble Tea key codes to virtual-terminal key codes so the
 // emulator can encode them per the active terminal modes (e.g. application
 // cursor keys), which raw byte injection would get wrong.
-var specialKeys = map[tea.KeyType]rune{
+var specialKeys = map[rune]rune{
 	tea.KeyEnter:     uv.KeyEnter,
 	tea.KeyTab:       uv.KeyTab,
 	tea.KeyBackspace: uv.KeyBackspace,
@@ -40,21 +40,21 @@ var specialKeys = map[tea.KeyType]rune{
 // has already parsed stdin into key events, so we re-encode rather than
 // forwarding raw bytes. Returns false for keys with no mapping.
 func translateKey(msg tea.KeyMsg) (termInput, bool) {
+	key := msg.Key()
+	runes := []rune(key.Text)
+
 	// Alt-modified printable key (meta).
-	if msg.Alt && msg.Type == tea.KeyRunes && len(msg.Runes) == 1 {
-		return termInput{isKey: true, key: vt.KeyPressEvent{Code: msg.Runes[0], Mod: vt.ModAlt}}, true
+	if key.Mod&tea.ModAlt != 0 && len(runes) == 1 {
+		return termInput{isKey: true, key: vt.KeyPressEvent{Code: runes[0], Mod: vt.ModAlt}}, true
 	}
 
-	switch msg.Type {
-	case tea.KeyRunes:
-		return termInput{text: string(msg.Runes)}, true
-	case tea.KeySpace:
-		return termInput{text: " "}, true
+	if key.Text != "" {
+		return termInput{text: key.Text}, true
 	}
 
-	if code, ok := specialKeys[msg.Type]; ok {
+	if code, ok := specialKeys[key.Code]; ok {
 		ev := vt.KeyPressEvent{Code: code}
-		if msg.Alt {
+		if key.Mod&tea.ModAlt != 0 {
 			ev.Mod |= vt.ModAlt
 		}
 		return termInput{isKey: true, key: ev}, true

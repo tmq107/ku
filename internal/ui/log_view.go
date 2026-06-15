@@ -5,8 +5,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 
 	"github.com/bjarneo/kli/internal/k8s"
 )
@@ -35,15 +35,15 @@ type logView struct {
 }
 
 func newLogView(th Theme) logView {
-	return logView{th: th, vp: viewport.New(0, 0), follow: true}
+	return logView{th: th, vp: viewport.New(), follow: true}
 }
 
 func (l *logView) setSize(w, h int) {
 	if h < 1 {
 		h = 1
 	}
-	l.vp.Width = w
-	l.vp.Height = h - 1
+	l.vp.SetWidth(w)
+	l.vp.SetHeight(h - 1)
 }
 
 func (l *logView) appendLine(s string) {
@@ -85,7 +85,7 @@ func (l logView) View() string {
 	}
 	right := style.Render("● " + state)
 	title := l.th.ModalTitle.Render(l.title)
-	return spread(title, right, l.vp.Width) + "\n" + l.vp.View()
+	return spread(title, right, l.vp.Width()) + "\n" + l.vp.View()
 }
 
 // streamLogs opens the log stream and feeds lines onto ch until the context is

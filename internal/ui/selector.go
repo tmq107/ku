@@ -3,10 +3,9 @@ package ui
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/cursor"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 type selKind int
@@ -74,7 +73,9 @@ type selector struct {
 func newSelector(th Theme) selector {
 	ti := textinput.New()
 	ti.Prompt = th.Prompt.Render("❯ ")
-	ti.Cursor.SetMode(cursor.CursorStatic)
+	styles := ti.Styles()
+	styles.Cursor.Blink = false
+	ti.SetStyles(styles)
 	return selector{th: th, input: ti}
 }
 

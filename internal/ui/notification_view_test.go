@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/bjarneo/kli/internal/k8s"
@@ -28,7 +28,7 @@ func TestNotificationOverlayRendersTopRight(t *testing.T) {
 	app.relayout()
 	app.setStatus("pods failed to load", true)
 
-	out := app.View()
+	out := app.View().Content
 	plain := ansi.Strip(out)
 	if !strings.Contains(plain, "ERROR") || !strings.Contains(plain, "pods failed to load") {
 		t.Fatalf("notification missing from view:\n%s", plain)

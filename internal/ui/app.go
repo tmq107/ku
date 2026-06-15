@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/vt"
 	"github.com/creack/pty"
 
@@ -420,15 +420,16 @@ func (a App) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if a.overlay != overlayNone {
 		return a, nil
 	}
-	x, bodyY, ok := a.bodyMousePos(msg)
+	mouse := msg.Mouse()
+	x, bodyY, ok := a.bodyMousePos(mouse)
 	if !ok {
 		return a, nil
 	}
 
-	if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
-		return a.handleMouseWheel(x, bodyY, msg.Button)
+	if _, ok := msg.(tea.MouseWheelMsg); ok && (mouse.Button == tea.MouseWheelUp || mouse.Button == tea.MouseWheelDown) {
+		return a.handleMouseWheel(x, bodyY, mouse.Button)
 	}
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+	if _, ok := msg.(tea.MouseClickMsg); !ok || mouse.Button != tea.MouseLeft {
 		return a, nil
 	}
 
@@ -453,7 +454,7 @@ func (a App) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
-func (a App) bodyMousePos(msg tea.MouseMsg) (int, int, bool) {
+func (a App) bodyMousePos(msg tea.Mouse) (int, int, bool) {
 	x := msg.X - a.gutter
 	y := msg.Y - a.gutter
 	if x < 0 || y < headerHeight || x >= a.width || y >= a.height-footerHeight {
@@ -514,7 +515,7 @@ func (a App) handleTableClick(x, bodyY int) (tea.Model, tea.Cmd) {
 
 func (a App) handleMouseWheel(x, bodyY int, button tea.MouseButton) (tea.Model, tea.Cmd) {
 	delta := mouseWheelRows
-	if button == tea.MouseButtonWheelUp {
+	if button == tea.MouseWheelUp {
 		delta = -delta
 	}
 	if a.sidebarVisible() {
@@ -548,8 +549,8 @@ func (a App) handleMouseWheel(x, bodyY int, button tea.MouseButton) (tea.Model, 
 }
 
 func scrollViewport(vp interface {
-	ScrollUp(int) []string
-	ScrollDown(int) []string
+	ScrollUp(int)
+	ScrollDown(int)
 }, delta int) {
 	if delta < 0 {
 		vp.ScrollUp(-delta)
@@ -1725,7 +1726,14 @@ func (a App) applyPalette(id string) (tea.Model, tea.Cmd) {
 
 // --- View -------------------------------------------------------------------
 
-func (a App) View() string {
+func (a App) View() tea.View {
+	v := tea.NewView(a.render())
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+func (a App) render() string {
 	if a.width == 0 || a.height == 0 {
 		return "starting kli…"
 	}

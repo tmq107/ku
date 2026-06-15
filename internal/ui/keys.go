@@ -1,6 +1,6 @@
 package ui
 
-import "github.com/charmbracelet/bubbles/key"
+import "charm.land/bubbles/v2/key"
 
 // keyMap holds every binding in the app. Navigation keys are kept disjoint
 // from action keys so the table's own movement keys never shadow an action.
