@@ -78,6 +78,21 @@ func TestLogFilterInvalidRegexIsForgiving(t *testing.T) {
 	}
 }
 
+func TestLogWrapDefaultsOnAndToggles(t *testing.T) {
+	l := newTestLogView()
+	if !l.vp.SoftWrap {
+		t.Fatalf("log view should wrap long lines by default")
+	}
+	l.toggleWrap()
+	if l.vp.SoftWrap {
+		t.Fatalf("w should switch to truncate (no wrap)")
+	}
+	l.toggleWrap()
+	if !l.vp.SoftWrap {
+		t.Fatalf("w should switch back to wrap")
+	}
+}
+
 func TestLogFilterAppliesToNewLines(t *testing.T) {
 	l := newTestLogView()
 	l.appendLine("keep me")

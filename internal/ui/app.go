@@ -867,6 +867,12 @@ func (a App) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (a App) updateLogs(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// ctrl+w toggles wrap in any state, including while filtering where plain w
+	// is filter text.
+	if msg.String() == "ctrl+w" {
+		a.logs.toggleWrap()
+		return a, nil
+	}
 	// Filtering captures all typing until it ends.
 	if a.logs.filtering {
 		switch {
@@ -896,11 +902,12 @@ func (a App) updateLogs(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, a.keys.Filter):
 		a.logs.startFilter()
 		return a, nil
+	case key.Matches(msg, a.keys.Wrap):
+		a.logs.toggleWrap()
+		return a, nil
 	case key.Matches(msg, a.keys.Follow):
 		a.logs.follow = !a.logs.follow
-		if a.logs.follow {
-			a.logs.vp.GotoBottom()
-		}
+		a.logs.stickToBottom()
 		return a, nil
 	case key.Matches(msg, a.keys.Top):
 		a.logs.follow = false
@@ -2008,7 +2015,7 @@ func (a App) hints() []hint {
 		}
 		return append(h, hint{"e", "edit"}, hint{"O", "docs"}, hint{"C", "cmd"}, hint{"esc", "back"})
 	case screenLogs:
-		return []hint{{"↑↓", "scroll"}, {"f", "follow"}, {"/", "filter"}, {"O", "docs"}, {"C", "cmd"}, {"esc", "back"}}
+		return []hint{{"↑↓", "scroll"}, {"f", "follow"}, {"/", "filter"}, {"w", "wrap"}, {"O", "docs"}, {"C", "cmd"}, {"esc", "back"}}
 	case screenCockpit:
 		if a.focus == focusSidebar {
 			return []hint{{"↑↓", "pick"}, {"enter", "open"}, {"tab", "table"}, {":", "jump"}, {"C", "cmd"}, {"?", "help"}}

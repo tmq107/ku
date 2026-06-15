@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 
@@ -47,7 +48,9 @@ type logView struct {
 }
 
 func newLogView(th Theme) logView {
-	return logView{th: th, vp: viewport.New(), follow: true, filter: newFilterInput("filter (regex)")}
+	vp := viewport.New()
+	vp.SoftWrap = true // wrap long lines so the full line is visible, not truncated
+	return logView{th: th, vp: vp, follow: true, filter: newFilterInput("filter (regex)")}
 }
 
 func (l *logView) setSize(w, h int) {
@@ -79,6 +82,11 @@ func (l *logView) relayout() {
 		h = 1
 	}
 	l.vp.SetHeight(h)
+	l.stickToBottom()
+}
+
+// stickToBottom keeps the newest lines in view while following.
+func (l *logView) stickToBottom() {
 	if l.follow {
 		l.vp.GotoBottom()
 	}
@@ -107,9 +115,7 @@ func (l *logView) appendLine(s string) {
 // tail while following.
 func (l *logView) syncViewport() {
 	l.vp.SetContent(l.content)
-	if l.follow {
-		l.vp.GotoBottom()
-	}
+	l.stickToBottom()
 }
 
 // rebuildContent recomputes the joined view from scratch, applying the active
@@ -170,6 +176,14 @@ func (l *logView) applyFilter() {
 	l.syncViewport()
 }
 
+// toggleWrap switches between wrapping long lines (full line visible) and
+// truncating them (one row per entry, scrollable left/right). The viewport
+// re-wraps from the stored lines on the next render, so only the flag flips.
+func (l *logView) toggleWrap() {
+	l.vp.SoftWrap = !l.vp.SoftWrap
+	l.stickToBottom()
+}
+
 func (l *logView) stop() {
 	if l.cancel != nil {
 		l.cancel()
@@ -199,7 +213,11 @@ func (l logView) View() string {
 		state = "paused"
 		style = l.th.Warn
 	}
-	right := style.Render("● " + state)
+	mode := "wrap"
+	if !l.vp.SoftWrap {
+		mode = "nowrap"
+	}
+	right := l.th.Dim.Render(mode) + "  " + style.Render("● "+state)
 	title := l.th.ModalTitle.Render(l.title)
 	header := spread(title, right, l.vp.Width())
 	if l.filtering || l.filterActive() {
@@ -236,21 +254,29 @@ func streamLogs(ctx context.Context, cl *k8s.Client, ns, pod, cont, prefix strin
 	}
 	defer rc.Close()
 
-	sc := bufio.NewScanner(rc)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for sc.Scan() {
-		line := sc.Text()
-		if prefix != "" {
-			line = prefix + " | " + line
+	// A bufio.Reader (not Scanner) keeps lines intact at any length: ReadString
+	// grows past the 64KB read buffer until it hits the newline, where a Scanner
+	// would error out and drop the line once it crossed its token cap.
+	br := bufio.NewReaderSize(rc, 64*1024)
+	for {
+		line, err := br.ReadString('\n')
+		if len(line) > 0 {
+			line = strings.TrimRight(line, "\r\n")
+			if prefix != "" {
+				line = prefix + " | " + line
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case ch <- logEvent{session: session, line: line}:
+			}
 		}
-		select {
-		case <-ctx.Done():
+		if err != nil {
+			if err != io.EOF && ctx.Err() == nil {
+				sendLogEvent(ch, logEvent{session: session, err: err})
+			}
 			return
-		case ch <- logEvent{session: session, line: line}:
 		}
-	}
-	if err := sc.Err(); err != nil && ctx.Err() == nil {
-		sendLogEvent(ch, logEvent{session: session, err: err})
 	}
 }
 
