@@ -62,6 +62,55 @@ func TestAssetName(t *testing.T) {
 	}
 }
 
+func TestCompareVersions(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want int
+	}{
+		{"v0.2.0", "v0.1.5", 1},
+		{"v0.1.5", "v0.2.0", -1},
+		{"v1.0.0", "v1.0.0", 0},
+		{"v0.1.5", "0.1.5", 0},      // missing leading v
+		{"v0.1.5-rc1", "v0.1.5", 0}, // pre-release suffix ignored
+		{"v0.10.0", "v0.9.0", 1},    // numeric, not lexical
+	}
+	for _, tt := range tests {
+		if got := compareVersions(tt.a, tt.b); got != tt.want {
+			t.Errorf("compareVersions(%q, %q) = %d; want %d", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+func TestMigrateToKu(t *testing.T) {
+	boom := fmt.Errorf("not found")
+	tests := []struct {
+		name                string
+		kuLatest, kliLatest string
+		kuErr, kliErr       error
+		want                bool
+	}{
+		{"ku newer", "v0.2.0", "v0.1.5", nil, nil, true},
+		{"ku equal", "v0.1.5", "v0.1.5", nil, nil, true},
+		{"ku older", "v0.1.0", "v0.1.5", nil, nil, false},
+		{"ku absent", "", "v0.1.5", boom, nil, false},
+		{"kli absent, ku present", "v0.1.0", "", nil, boom, true},
+	}
+	for _, tt := range tests {
+		if got := migrateToKu(tt.kuLatest, tt.kuErr, tt.kliLatest, tt.kliErr); got != tt.want {
+			t.Errorf("%s: migrateToKu = %v; want %v", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestRenameNotice(t *testing.T) {
+	n := renameNotice("v0.2.0", "/usr/local/bin/kli")
+	for _, want := range []string{"renamed to ku", "v0.2.0", kuRepo, "rm /usr/local/bin/kli"} {
+		if !strings.Contains(n, want) {
+			t.Errorf("renameNotice missing %q in:\n%s", want, n)
+		}
+	}
+}
+
 func TestLatestVersionSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.Contains(r.URL.Path, "/repos/") || !strings.HasSuffix(r.URL.Path, "/releases/latest") {

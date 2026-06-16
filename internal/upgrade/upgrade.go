@@ -10,11 +10,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
 
-const repo = "bjarneo/kli"
+const (
+	repo   = "bjarneo/kli" // the legacy binary and repo
+	kuRepo = "bjarneo/ku"  // the project's new home after the rename
+)
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
@@ -22,12 +26,20 @@ type release struct {
 	TagName string `json:"tag_name"`
 }
 
-// Run checks for a newer GitHub release and replaces the current binary.
+// Run checks for a newer GitHub release and replaces the current binary. It
+// also checks the renamed "ku" repo: when ku carries the newest release, it
+// points the user there instead of upgrading the old kli binary.
 func Run(currentVersion string) error {
-	latest, err := latestVersion()
-	if err != nil {
-		return fmt.Errorf("checking latest version: %w", err)
+	kliLatest, kliErr := latestVersionFor(repo)
+	kuLatest, kuErr := latestVersionFor(kuRepo)
+
+	if migrateToKu(kuLatest, kuErr, kliLatest, kliErr) {
+		return announceRename(kuLatest)
 	}
+	if kliErr != nil {
+		return fmt.Errorf("checking latest version: %w", kliErr)
+	}
+	latest := kliLatest
 
 	currentVersion = strings.TrimSpace(currentVersion)
 	if currentVersion != "" && currentVersion != "dev" && currentVersion == latest {
@@ -87,7 +99,9 @@ func assetName(goos, goarch string) (string, error) {
 	return name, nil
 }
 
-func latestVersion() (string, error) {
+func latestVersion() (string, error) { return latestVersionFor(repo) }
+
+func latestVersionFor(repo string) (string, error) {
 	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
 	resp, err := httpClient.Get(url)
 	if err != nil {
@@ -107,6 +121,71 @@ func latestVersion() (string, error) {
 		return "", fmt.Errorf("release has no tag_name")
 	}
 	return r.TagName, nil
+}
+
+// migrateToKu reports whether ku now carries the newest release (so the user
+// should move there). It is true when ku has a release and is at least as new
+// as kli, or kli has no resolvable release while ku does.
+func migrateToKu(kuLatest string, kuErr error, kliLatest string, kliErr error) bool {
+	if kuErr != nil {
+		return false
+	}
+	return kliErr != nil || compareVersions(kuLatest, kliLatest) >= 0
+}
+
+// compareVersions orders two "vMAJOR.MINOR.PATCH" tags: -1 if a < b, 0 if
+// equal, 1 if a > b. Any pre-release/build suffix is ignored.
+func compareVersions(a, b string) int {
+	pa, pb := parseVersion(a), parseVersion(b)
+	for i := range pa {
+		switch {
+		case pa[i] < pb[i]:
+			return -1
+		case pa[i] > pb[i]:
+			return 1
+		}
+	}
+	return 0
+}
+
+func parseVersion(v string) [3]int {
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	var out [3]int
+	for i, part := range strings.SplitN(v, ".", 3) {
+		out[i], _ = strconv.Atoi(part)
+	}
+	return out
+}
+
+// announceRename tells the user the project is now "ku" and prompts them to
+// install it and delete the old kli binary.
+func announceRename(kuLatest string) error {
+	exe, err := os.Executable()
+	if err == nil {
+		if resolved, rerr := filepath.EvalSymlinks(exe); rerr == nil {
+			exe = resolved
+		}
+	} else {
+		exe = ""
+	}
+	fmt.Print(renameNotice(kuLatest, exe))
+	return nil
+}
+
+func renameNotice(kuLatest, exe string) string {
+	var b strings.Builder
+	fmt.Fprint(&b, "kli has been renamed to ku.\n\n")
+	fmt.Fprintf(&b, "The newest version (%s) is now published as \"ku\":\n", kuLatest)
+	fmt.Fprintf(&b, "  https://github.com/%s\n\n", kuRepo)
+	fmt.Fprint(&b, "Install ku, then delete this old kli binary:\n")
+	fmt.Fprintf(&b, "  curl -fsSL https://raw.githubusercontent.com/%s/main/install.sh | sh\n", kuRepo)
+	if exe != "" {
+		fmt.Fprintf(&b, "  rm %s\n", exe)
+	}
+	return b.String()
 }
 
 func latestChecksum(url, asset string) (string, error) {
