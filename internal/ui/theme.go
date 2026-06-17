@@ -68,30 +68,11 @@ func ansiPalette(dark bool) Palette {
 	}
 }
 
-// tokyoNightPalette is the fallback theme: a fixed, high-contrast palette for
-// terminals whose ANSI colors are undefined or unpleasant.
-func tokyoNightPalette() Palette {
-	return Palette{
-		Accent:     lipgloss.Color("#7aa2f7"), // blue
-		Accent2:    lipgloss.Color("#bb9af7"), // magenta
-		Fg:         lipgloss.Color("#c0caf5"),
-		Muted:      lipgloss.Color("#7f849c"),
-		Border:     lipgloss.Color("#3b4261"),
-		Good:       lipgloss.Color("#9ece6a"), // green
-		Warn:       lipgloss.Color("#e0af68"), // yellow
-		Bad:        lipgloss.Color("#f7768e"), // red
-		SelFg:      lipgloss.Color("#c0caf5"),
-		SelBg:      lipgloss.Color("#283457"),
-		HeaderBg:   lipgloss.Color("#7aa2f7"),
-		LogoFg:     lipgloss.Color("#16161e"),
-		ReverseSel: false,
-	}
-}
-
 // Theme bundles a palette with the precomputed styles the views render with.
 type Theme struct {
 	Name string
 	P    Palette
+	Dark bool // terminal background detected at startup, for rebuilding the ANSI palette
 
 	Logo      lipgloss.Style
 	HeaderKey lipgloss.Style
@@ -178,18 +159,38 @@ func NewTheme(name string, p Palette) Theme {
 	return t
 }
 
-// PickTheme selects the theme. ANSI is the default and adapts to a light or
-// dark terminal background; Tokyo Night is the fixed fallback, selectable via
-// --theme or $KU_THEME. Detection runs here (called before the Bubble Tea
-// program starts) so it does not race the program's stdin reader.
+// PickTheme resolves a theme name to a Theme at startup, reading the terminal
+// background once here (before the Bubble Tea program starts) so detection does
+// not race the program's stdin reader. The name is already resolved by the
+// caller; theme precedence (--theme, $KU_THEME, saved) lives in Run.
 func PickTheme(name string) Theme {
-	if name == "" {
-		name = os.Getenv("KU_THEME")
+	return buildTheme(name, lipgloss.HasDarkBackground(os.Stdin, os.Stdout))
+}
+
+// buildTheme constructs a theme by name without touching the terminal, so it is
+// safe to call mid-session. Built-in themes pick their light or dark variant
+// from dark; an unknown name (including "ansi") adapts the terminal's own palette.
+func buildTheme(name string, dark bool) Theme {
+	if oc, ok := lookupOCTheme(name); ok {
+		sub := oc.dark
+		if !dark {
+			sub = oc.light
+		}
+		t := NewTheme(oc.id, ocToPalette(sub))
+		t.Dark = dark
+		return t
 	}
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "tokyonight", "tokyo-night", "tokyo":
-		return NewTheme("tokyonight", tokyoNightPalette())
-	default:
-		return NewTheme("ansi", ansiPalette(lipgloss.HasDarkBackground(os.Stdin, os.Stdout)))
+	t := NewTheme("ansi", ansiPalette(dark))
+	t.Dark = dark
+	return t
+}
+
+// lookupOCTheme finds a built-in theme by name, accepting the tokyonight aliases.
+func lookupOCTheme(name string) (ocTheme, bool) {
+	n := strings.ToLower(strings.TrimSpace(name))
+	if n == "tokyo" || n == "tokyo-night" {
+		n = "tokyonight"
 	}
+	oc, ok := ocByID[n]
+	return oc, ok
 }
