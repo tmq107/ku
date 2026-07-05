@@ -76,6 +76,13 @@ type deploymentLogsMsg struct {
 	err      error
 }
 
+type servicePortsMsg struct {
+	client   *k8s.Client
+	ns, name string
+	ports    []k8s.ServicePort
+	err      error
+}
+
 type actionDoneMsg struct {
 	text   string
 	err    error
@@ -320,6 +327,15 @@ func deploymentLogsCmd(cl *k8s.Client, ns, name string) tea.Cmd {
 		defer cancel()
 		targets, err := cl.DeploymentLogTargets(ctx, ns, name)
 		return deploymentLogsMsg{ns: ns, name: name, targets: targets, err: err}
+	}
+}
+
+func servicePortsCmd(cl *k8s.Client, ns, name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := opCtx()
+		defer cancel()
+		ports, err := cl.ServicePorts(ctx, ns, name)
+		return servicePortsMsg{client: cl, ns: ns, name: name, ports: ports, err: err}
 	}
 }
 

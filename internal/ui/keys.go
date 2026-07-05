@@ -17,19 +17,20 @@ type keyMap struct {
 	HScroll  key.Binding
 
 	// row actions
-	Enter      key.Binding
-	Describe   key.Binding
-	YAML       key.Binding
-	Logs       key.Binding
-	Edit       key.Binding
-	Shell      key.Binding
-	Restart    key.Binding
-	Trigger    key.Binding
-	Delete     key.Binding
-	Cordon     key.Binding
-	Drain      key.Binding
-	Docs       key.Binding
-	DeployLogs key.Binding
+	Enter       key.Binding
+	Describe    key.Binding
+	YAML        key.Binding
+	Logs        key.Binding
+	Edit        key.Binding
+	Shell       key.Binding
+	PortForward key.Binding
+	Restart     key.Binding
+	Trigger     key.Binding
+	Delete      key.Binding
+	Cordon      key.Binding
+	Drain       key.Binding
+	Docs        key.Binding
+	DeployLogs  key.Binding
 
 	// views / navigation
 	Focus     key.Binding
@@ -72,19 +73,20 @@ func defaultKeys() keyMap {
 		Bottom:   key.NewBinding(key.WithKeys("G", "end"), key.WithHelp("G", "bottom")),
 		HScroll:  key.NewBinding(key.WithKeys("left", "right"), key.WithHelp("←/→", "scroll columns")),
 
-		Enter:      key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "config")),
-		Describe:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "describe")),
-		YAML:       key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yaml")),
-		Logs:       key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "logs")),
-		Edit:       key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit (nvim)")),
-		Shell:      key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "shell / scale")),
-		Restart:    key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "rollout restart")),
-		Trigger:    key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "trigger job")),
-		Delete:     key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "delete")),
-		Cordon:     key.NewBinding(key.WithKeys("K"), key.WithHelp("K", "cordon node")),
-		Drain:      key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "drain node")),
-		Docs:       key.NewBinding(key.WithKeys("O"), key.WithHelp("O", "open docs")),
-		DeployLogs: key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "deployment logs")),
+		Enter:       key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "config")),
+		Describe:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "describe")),
+		YAML:        key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yaml")),
+		Logs:        key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "logs")),
+		Edit:        key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit (nvim)")),
+		Shell:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "shell / scale")),
+		PortForward: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "port-forward")),
+		Restart:     key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "rollout restart")),
+		Trigger:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "trigger job")),
+		Delete:      key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "delete")),
+		Cordon:      key.NewBinding(key.WithKeys("K"), key.WithHelp("K", "cordon node")),
+		Drain:       key.NewBinding(key.WithKeys("D"), key.WithHelp("D", "drain node")),
+		Docs:        key.NewBinding(key.WithKeys("O"), key.WithHelp("O", "open docs")),
+		DeployLogs:  key.NewBinding(key.WithKeys("L"), key.WithHelp("L", "deployment logs")),
 
 		Focus:     key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab ←→", "switch pane")),
 		Filter:    key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
@@ -122,7 +124,7 @@ type helpGroup struct {
 func (k keyMap) groups() []helpGroup {
 	return []helpGroup{
 		{"Navigation", []key.Binding{k.Up, k.Down, k.HalfUp, k.HalfDown, k.PageUp, k.PageDown, k.Top, k.Bottom, k.HScroll}},
-		{"Actions", []key.Binding{k.Enter, k.Describe, k.YAML, k.Logs, k.DeployLogs, k.Edit, k.Shell, k.Restart, k.Trigger, k.Delete, k.Cordon, k.Drain, k.Docs}},
+		{"Actions", []key.Binding{k.Enter, k.Describe, k.YAML, k.Logs, k.DeployLogs, k.Edit, k.Shell, k.PortForward, k.Restart, k.Trigger, k.Delete, k.Cordon, k.Drain, k.Docs}},
 		{"Views", []key.Binding{k.Focus, k.Jump, k.Palette, k.EditMode, k.Filter, k.Sort, k.Refresh, k.Wide, k.Command}},
 		{"Cluster", []key.Binding{k.Namespace, k.AllNS, k.Context}},
 		{"Logs", []key.Binding{k.Follow, k.Filter, k.Wrap, k.Select, k.Mark, k.Copy, k.CopyAll, k.Clear}},

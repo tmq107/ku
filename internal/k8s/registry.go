@@ -49,6 +49,11 @@ func (r ResourceInfo) IsPod() bool {
 	return r.Group == "" && r.Resource == "pods"
 }
 
+// IsService reports whether this resource is the core Service type.
+func (r ResourceInfo) IsService() bool {
+	return r.Group == "" && r.Resource == "services"
+}
+
 // IsDeployment reports whether this resource is an apps Deployment list.
 func (r ResourceInfo) IsDeployment() bool {
 	return r.Resource == "deployments" && (r.Group == "" || r.Group == "apps")

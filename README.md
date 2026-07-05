@@ -11,7 +11,8 @@
 `ku` is short for **KU**bernetes. It is also the Norwegian word for cow.
 
 A fast, keyboard-driven Kubernetes TUI. Browse any resource, read and edit
-objects, follow logs, and open a shell in a pod, without leaving the terminal.
+objects, follow logs, port-forward Services, and open a shell in a pod, without
+leaving the terminal.
 Inspired by k9s, Lens, and lazygit.
 
 https://github.com/user-attachments/assets/48756c6b-00ae-470d-8fb5-3f93ecbd46df
@@ -57,10 +58,11 @@ edit mode.
 
 ## Modes
 
-`ku` starts read-only. Every mutating action is off: edit, delete, rollout
-restart, scale, CronJob trigger, cordon, drain, and shell into pods or nodes.
-Read, describe, YAML, logs, and the `kubectl` command preview still work. For
-all you fat-fingers out there, your cluster is safe.
+`ku` starts read-only. Every mutating or live access action is off: edit,
+delete, rollout restart, scale, CronJob trigger, cordon, drain, shell into pods
+or nodes, and Service port-forward. Read, describe, YAML, logs, and the
+`kubectl` command preview still work. For all you fat-fingers out there, your
+cluster is safe.
 
 To make changes, press `Shift+E` or open the command palette (`Ctrl+K`) and pick
 "Enter edit mode", then confirm the prompt. The header chip flips from a green
@@ -121,7 +123,7 @@ See [Configuration](docs/configuration.md) for the full reference.
 - A cockpit overview on launch: cluster health, node CPU and memory gauges, pod and deployment status, and recent warnings.
 - Server-rendered tables for any resource, the same columns as `kubectl get`, including CRDs.
 - lazygit-style layout: a left resource nav, `Tab` between panes, and a status bar that always shows the keys that work right now.
-- Config summaries, raw YAML, logs, edit-in-editor, shell into pods or nodes, delete, scale, restart, and CronJob trigger, all inside the TUI.
+- Config summaries, raw YAML, logs, Service port-forward, edit-in-editor, shell into pods or nodes, delete, scale, restart, and CronJob trigger, all inside the TUI.
 - ANSI colors that match your terminal in light or dark mode, with Tokyo Night as a fallback (`--theme tokyonight`).
 - A customizable sidebar menu via an optional config file (`ku config init`): add CRDs like HPAs, KEDA ScaledObjects, or OpenTelemetry collectors.
 - `C` shows the equivalent `kubectl` command, and `O` opens upstream Kubernetes docs for known resources.

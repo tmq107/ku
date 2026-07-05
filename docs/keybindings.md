@@ -24,6 +24,7 @@ can run any of these and jump to any resource.
 | `l` | logs (pods); `f` toggles follow |
 | `e` | edit in `$EDITOR`, then confirm apply |
 | `s` | shell into a pod, node shell on a node, or scale a workload |
+| `p` | port-forward a Service |
 | `R` | rollout restart (deployments, statefulsets, daemonsets) |
 | `t` | trigger a CronJob once (with confirm) |
 | `K` | cordon / uncordon a node (with confirm) |
@@ -31,9 +32,9 @@ can run any of these and jump to any resource.
 | `x` / `Delete` | delete (with confirm) |
 | `O` | open Kubernetes docs for the current resource, when known |
 
-The bottom bar adapts to the selected resource: pods show logs and shell, nodes
-show node shell, cordon, and drain, workloads show scale and restart, and
-CronJobs show trigger.
+The bottom bar adapts to the selected resource: pods show logs and shell,
+Services show port-forward, nodes show node shell, cordon, and drain, workloads
+show scale and restart, and CronJobs show trigger.
 
 Draining cordons the node, then evicts its pods through the eviction API so
 PodDisruptionBudgets are honored. DaemonSet and static (mirror) pods are left in
@@ -71,6 +72,7 @@ until edit mode is enabled with `Shift+E` or the command palette.
 | Config summary | scroll, `d` / `y` YAML, `e` edit, `t` trigger CronJob, `esc` back |
 | Detail (YAML) | scroll, `Enter` config, `e` edit, `t` trigger CronJob, `esc` back |
 | Shell / editor | keys go to the program; `Ctrl+Shift+V` pastes in shell mode; `Ctrl+V` is passed through; `Ctrl+\` detaches (cancels an edit) |
+| Port-forward | `p` or `Ctrl+\` stops the active forward |
 | Command overlay | `C`, `q`, or `esc` closes |
 | Pickers / palette | move, type to filter, `Enter` select, `esc` cancel |
 | Confirm | `y` / `Enter` confirm, `n` / `esc` cancel |
@@ -98,3 +100,13 @@ flow back in right away.
 In shell mode, paste with `Ctrl+Shift+V`. `Ctrl+V` is not a paste shortcut; it is
 sent to the running shell/program. Mouse capture is released in shell mode, so
 your terminal's normal click-and-drag text selection works inside the shell.
+
+## Service port-forward
+
+Press `p` on a Service in edit mode. Pick a Service port, or type
+`local:service-port` to choose your local machine port. Examples:
+
+- `8080:http` forwards local port `8080` to Service port `http`.
+- `18080:80` forwards local port `18080` to Service port `80`.
+
+The forward runs in an overlay. Press `p` again, or `Ctrl+\`, to stop it.

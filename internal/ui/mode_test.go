@@ -112,6 +112,7 @@ func TestReadOnlyBlocksMutations(t *testing.T) {
 		{"restart", func(a App) (tea.Model, tea.Cmd) { return a.openRestart() }},
 		{"trigger", func(a App) (tea.Model, tea.Cmd) { return a.openTriggerJobTarget(target{name: "x"}) }},
 		{"shell", func(a App) (tea.Model, tea.Cmd) { return a.openShell() }},
+		{"port-forward", func(a App) (tea.Model, tea.Cmd) { return a.openServicePortForwardTarget(target{name: "x"}) }},
 		{"cordon", func(a App) (tea.Model, tea.Cmd) { return a.openCordon() }},
 		{"drain", func(a App) (tea.Model, tea.Cmd) { return a.openDrain() }},
 		{"node shell", func(a App) (tea.Model, tea.Cmd) { return a.openNodeShell() }},

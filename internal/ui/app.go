@@ -2,11 +2,13 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/key"
@@ -109,12 +111,13 @@ type App struct {
 	termSession int
 
 	// pending action context
-	scaleTarget  target
-	configTarget target
-	detailTarget target
-	logTarget    target
-	execTarget   target
-	themeBase    Theme // theme to restore on theme-picker cancel
+	scaleTarget       target
+	configTarget      target
+	detailTarget      target
+	logTarget         target
+	execTarget        target
+	portForwardTarget target
+	themeBase         Theme // theme to restore on theme-picker cancel
 
 	logSession int
 	loadSeq    int
@@ -425,6 +428,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case containersMsg:
 		return a.handleContainers(m)
+
+	case servicePortsMsg:
+		return a.handleServicePorts(m)
 
 	case nodeDebugReadyMsg:
 		if m.client != a.client {
@@ -939,6 +945,8 @@ func (a App) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.openLogs()
 	case key.Matches(msg, a.keys.DeployLogs):
 		return a.openDeploymentLogs()
+	case key.Matches(msg, a.keys.PortForward):
+		return a.openServicePortForward()
 	case key.Matches(msg, a.keys.Edit):
 		return a.openEdit()
 	case key.Matches(msg, a.keys.Shell):
@@ -973,6 +981,8 @@ func (a App) updateConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.editTarget(a.configTarget)
 	case key.Matches(msg, a.keys.DeployLogs):
 		return a.openDeploymentLogsTarget(a.configTarget)
+	case key.Matches(msg, a.keys.PortForward):
+		return a.openServicePortForwardTarget(a.configTarget)
 	case key.Matches(msg, a.keys.Trigger):
 		return a.openTriggerJobTarget(a.configTarget)
 	case key.Matches(msg, a.keys.Top):
@@ -999,6 +1009,8 @@ func (a App) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.editTarget(a.detailTarget)
 	case key.Matches(msg, a.keys.DeployLogs):
 		return a.openDeploymentLogsTarget(a.detailTarget)
+	case key.Matches(msg, a.keys.PortForward):
+		return a.openServicePortForwardTarget(a.detailTarget)
 	case key.Matches(msg, a.keys.Trigger):
 		return a.openTriggerJobTarget(a.detailTarget)
 	case key.Matches(msg, a.keys.Top):
@@ -1149,13 +1161,15 @@ func (a App) updateTerm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.screen = screenTable
 		return a, nil
 	}
-	// ctrl+\ detaches/cancels without killing ku; everything else goes to the
-	// running program.
-	if msg.String() == "ctrl+\\" {
+	// ctrl+\ detaches/cancels without killing ku; port-forward also lets the same
+	// action key stop the active forward.
+	if msg.String() == "ctrl+\\" || (a.term.detachStatus != "" && key.Matches(msg, a.keys.PortForward)) {
 		note := "shell detached"
 		if a.term.isEdit {
 			os.Remove(a.term.editPath) // cancelled: discard the unsaved edit
 			note = "edit cancelled"
+		} else if a.term.detachStatus != "" {
+			note = a.term.detachStatus
 		}
 		cleanup := a.term.onClose // e.g. delete the node debug pod
 		a.term.stop()
@@ -1459,6 +1473,28 @@ func (a App) handleContainers(m containersMsg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
+func (a App) handleServicePorts(m servicePortsMsg) (tea.Model, tea.Cmd) {
+	t := a.portForwardTarget
+	if m.client != a.client || m.ns != t.ns || m.name != t.name || !t.res.IsService() {
+		return a, nil
+	}
+	if m.err != nil {
+		a.setStatus("port-forward: "+trimErr(m.err), true)
+		return a, nil
+	}
+	if len(m.ports) == 0 {
+		a.setStatus("port-forward: service has no ports", true)
+		return a, nil
+	}
+	items := make([]selItem, 0, len(m.ports))
+	for _, p := range m.ports {
+		items = append(items, selItem{title: servicePortTitle(p), desc: servicePortDesc(p), id: p.ID()})
+	}
+	a.sel.open(selServicePort, "Port-forward "+qualified(m.ns, m.name), "local:service-port", items, true)
+	a.overlay = overlaySelector
+	return a, nil
+}
+
 func (a App) handleDeploymentLogs(m deploymentLogsMsg) (tea.Model, tea.Cmd) {
 	if m.ns != a.logTarget.ns || m.name != a.logTarget.name || !a.logTarget.res.IsDeployment() {
 		return a, nil
@@ -1579,6 +1615,46 @@ func (a App) startExec(cl *k8s.Client, ns, pod, container, title string, command
 		err := cl.ExecStream(ctx, ns, pod, container, command, em, em, q)
 		em.Close() // unblock the stream's stdin reader and the input goroutine
 		q.Close()
+		result.err = err
+		close(result.done)
+	}()
+
+	return a, tea.Batch(termTick(sess), waitTermDone(sess, result))
+}
+
+func (a App) startServicePortForward(spec k8s.PortForwardSpec) (tea.Model, tea.Cmd) {
+	target := a.portForwardTarget
+	a.term.stop()
+	a.termSession++
+	sess := a.termSession
+
+	cols, rows := termDims(a.width, a.bodyH())
+	em := vt.NewSafeEmulator(cols, rows)
+	ctx, cancel := context.WithCancel(context.Background())
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+	stop := func() {
+		cancel()
+		stopOnce.Do(func() { close(stopCh) })
+	}
+	result := &termResult{done: make(chan struct{})}
+
+	t := newTermView(a.theme)
+	t.em = em
+	t.cancel = stop
+	t.result = result
+	t.session = sess
+	t.cols, t.rows = cols, rows
+	t.title = "port-forward service/" + qualified(target.ns, target.name)
+	t.detachStatus = "port-forward stopped"
+	a.term = t
+	a.overlay = overlayTerm
+
+	go func() {
+		w := terminalWriter{w: em}
+		ready := make(chan struct{})
+		err := a.client.PortForwardService(ctx, target.ns, target.name, spec, stopCh, ready, w, w)
+		em.Close()
 		result.err = err
 		close(result.done)
 	}()
@@ -1832,6 +1908,38 @@ func (a App) openTriggerJob() (tea.Model, tea.Cmd) {
 	return a.openTriggerJobTarget(target{res: a.res, ns: row.Namespace, name: row.Name})
 }
 
+func (a App) openServicePortForward() (tea.Model, tea.Cmd) {
+	row, ok := a.table.selected()
+	if !ok {
+		return a, nil
+	}
+	return a.openServicePortForwardTarget(target{res: a.res, ns: row.Namespace, name: row.Name})
+}
+
+func (a App) openServicePortForwardTarget(t target) (tea.Model, tea.Cmd) {
+	if a.denyReadOnly("port-forward") {
+		return a, nil
+	}
+	if t.name == "" {
+		return a, nil
+	}
+	if !t.res.IsService() {
+		a.setStatus("port-forward: switch to services first", true)
+		return a, nil
+	}
+	ns := t.ns
+	if ns == "" {
+		ns = a.namespace
+	}
+	if ns == "" {
+		a.setStatus("port-forward: service namespace unavailable", true)
+		return a, nil
+	}
+	a.portForwardTarget = target{res: t.res, ns: ns, name: t.name}
+	a.setStatus("loading service ports for "+qualified(ns, t.name), false)
+	return a, servicePortsCmd(a.client, ns, t.name)
+}
+
 // openCordon toggles a node between schedulable and cordoned. It first reads the
 // current state so the confirm names the right direction.
 func (a App) openCordon() (tea.Model, tea.Cmd) {
@@ -1886,6 +1994,51 @@ func (a App) openTriggerJobTarget(t target) (tea.Model, tea.Cmd) {
 	loc := qualified(ns, t.name)
 	return a.confirmAction("Trigger Job", "Create one-off Job from "+loc+" ?", false,
 		triggerJobCmd(a.client, ns, t.name))
+}
+
+func parseServicePortForwardSpec(id, value string) (k8s.PortForwardSpec, error) {
+	if id != "" {
+		return k8s.PortForwardSpec{ServicePort: id}, nil
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return k8s.PortForwardSpec{}, fmt.Errorf("enter a service port or local:service-port")
+	}
+	parts := strings.Split(value, ":")
+	if len(parts) > 2 {
+		return k8s.PortForwardSpec{}, fmt.Errorf("use local:service-port")
+	}
+	if len(parts) == 1 {
+		return k8s.PortForwardSpec{ServicePort: strings.TrimSpace(parts[0])}, nil
+	}
+	local, err := parseTCPPort(parts[0])
+	if err != nil {
+		return k8s.PortForwardSpec{}, err
+	}
+	servicePort := strings.TrimSpace(parts[1])
+	if servicePort == "" {
+		return k8s.PortForwardSpec{}, fmt.Errorf("service port required")
+	}
+	return k8s.PortForwardSpec{LocalPort: local, ServicePort: servicePort}, nil
+}
+
+func parseTCPPort(s string) (int32, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 1 || n > 65535 {
+		return 0, fmt.Errorf("local port must be 1-65535")
+	}
+	return int32(n), nil
+}
+
+func servicePortTitle(p k8s.ServicePort) string {
+	if p.Name != "" {
+		return p.Name + " (" + itoa(int(p.Port)) + ")"
+	}
+	return itoa(int(p.Port))
+}
+
+func servicePortDesc(p k8s.ServicePort) string {
+	return strings.TrimSpace(p.Protocol + " target " + p.TargetPort)
 }
 
 // confirmAction opens the confirm overlay for a command to run on yes.
@@ -1976,6 +2129,9 @@ func (a App) openPalette() (tea.Model, tea.Cmd) {
 			if writes {
 				items = append(items, selItem{title: "Shell into pod", desc: "s", id: "act:shell"})
 			}
+		}
+		if writes && a.res.IsService() {
+			items = append(items, selItem{title: "Port-forward service", desc: "p", id: "act:portforward"})
 		}
 		if a.res.IsDeployment() {
 			items = append(items, selItem{title: "Follow deployment logs", desc: "L", id: "act:deploylogs"})
@@ -2151,6 +2307,17 @@ func (a App) applySelection(res selResult) (tea.Model, tea.Cmd) {
 		a.applyTheme(buildTheme(res.id, a.theme.Dark))
 		a.persist()
 		return a, nil
+	case selServicePort:
+		id := res.id
+		if strings.Contains(res.value, ":") {
+			id = ""
+		}
+		spec, err := parseServicePortForwardSpec(id, res.value)
+		if err != nil {
+			a.setStatus("port-forward: "+err.Error(), true)
+			return a, nil
+		}
+		return a.startServicePortForward(spec)
 	}
 	return a, nil
 }
@@ -2177,6 +2344,8 @@ func (a App) applyPalette(id string) (tea.Model, tea.Cmd) {
 		return a.openDeploymentLogs()
 	case "act:shell":
 		return a.openShell()
+	case "act:portforward":
+		return a.openServicePortForward()
 	case "act:nodeshell":
 		return a.openNodeShell()
 	case "act:cordon":
@@ -2522,7 +2691,12 @@ const creatorHandle = "x.com/iamdothash"
 func (a App) hints() []hint {
 	switch a.overlay {
 	case overlayTerm:
-		return []hint{{"keys", "→ shell"}, {"ctrl+\\", "detach"}}
+		termKey, termAction := "ctrl+\\", "detach"
+		if a.term.detachStatus != "" {
+			termKey = "p/ctrl+\\"
+			termAction = "stop"
+		}
+		return []hint{{"keys", "session"}, {termKey, termAction}}
 	case overlaySelector:
 		return []hint{{"↑↓", "move"}, {"enter", "select"}, {"esc", "cancel"}}
 	case overlayHelp:
@@ -2542,6 +2716,9 @@ func (a App) hints() []hint {
 		if a.configTarget.res.IsDeployment() {
 			h = append(h, hint{"L", "all logs"})
 		}
+		if !a.readOnly && a.configTarget.res.IsService() {
+			h = append(h, hint{"p", "port-forward"})
+		}
 		if !a.readOnly && a.configTarget.res.IsCronJob() {
 			h = append(h, hint{"t", "trigger"})
 		}
@@ -2553,6 +2730,9 @@ func (a App) hints() []hint {
 		h := []hint{{"↑↓", "scroll"}, {"enter", "config"}}
 		if a.detailTarget.res.IsDeployment() {
 			h = append(h, hint{"L", "all logs"})
+		}
+		if !a.readOnly && a.detailTarget.res.IsService() {
+			h = append(h, hint{"p", "port-forward"})
 		}
 		if !a.readOnly && a.detailTarget.res.IsCronJob() {
 			h = append(h, hint{"t", "trigger"})
@@ -2593,6 +2773,10 @@ func (a App) hints() []hint {
 		}
 	case a.res.IsDeployment():
 		h = append(h, hint{"L", "all logs"})
+	case a.res.IsService():
+		if writes {
+			h = append(h, hint{"p", "port-forward"})
+		}
 	case a.res.IsNodes():
 		if nodeOps {
 			h = append(h, hint{"s", "node shell"}, hint{"K", "cordon"}, hint{"D", "drain"})

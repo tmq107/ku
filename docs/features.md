@@ -82,6 +82,18 @@ name.
 (it prompts for the container when there are several). `f` toggles auto-scroll
 so you can read back through history; `g` / `G` jump to top and bottom.
 
+## Port-forward a Service
+
+`p` on a Service opens a Service port picker in edit mode. Choose a listed port,
+or type `local:service-port` to set the local machine port yourself:
+
+- `8080:http` forwards local port `8080` to Service port `http`.
+- `18080:80` forwards local port `18080` to Service port `80`.
+
+ku resolves the Service selector to a running backing pod, resolves named
+targetPorts when needed, and starts a local TCP forward in an overlay. Press `p`
+again, or `Ctrl+\`, to stop it.
+
 ## Shell into a pod or node
 
 `s` on a pod opens an interactive shell in an overlay, run inside the TUI using
@@ -106,9 +118,9 @@ count. `R` triggers a rolling restart of a deployment, statefulset, or daemonset
 on a CronJob creates a one-off Job from its job template, after a confirm. `x`
 deletes the selected object after a confirm.
 
-The bottom bar is context-aware: it shows logs and shell for pods, scale and
-restart for workloads, and trigger for CronJobs, so the relevant actions are
-always in view.
+The bottom bar is context-aware: it shows logs and shell for pods, port-forward
+for Services, scale and restart for workloads, and trigger for CronJobs, so the
+relevant actions are always in view.
 
 ## Namespaces and contexts
 
