@@ -72,7 +72,6 @@ until edit mode is enabled with `Shift+E` or the command palette.
 | Config summary | scroll, `d` / `y` YAML, `e` edit, `t` trigger CronJob, `esc` back |
 | Detail (YAML) | scroll, `Enter` config, `e` edit, `t` trigger CronJob, `esc` back |
 | Shell / editor | keys go to the program; `Ctrl+Shift+V` pastes in shell mode; `Ctrl+V` is passed through; `Ctrl+\` detaches (cancels an edit) |
-| Port-forward | `p` or `Ctrl+\` stops the active forward |
 | Command overlay | `C`, `q`, or `esc` closes |
 | Pickers / palette | move, type to filter, `Enter` select, `esc` cancel |
 | Confirm | `y` / `Enter` confirm, `n` / `esc` cancel |
@@ -112,4 +111,6 @@ Press `p` on a Service in edit mode. Pick a Service port, or type
 ClusterIP and NodePort Services are forwarded the same way. If you pick port
 `80` directly, ku tries local port `80`; type `8080:80` to use local `8080`.
 
-The forward runs in an overlay. Press `p` again, or `Ctrl+\`, to stop it.
+The forward runs in the background. Active forwards show as a `pf` count in the
+header. To list or stop them, open the command palette with `Ctrl+K`, pick
+`Port-forwards`, then select a forward. Selecting a forward stops it.

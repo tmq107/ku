@@ -21,6 +21,7 @@ const (
 	selSort
 	selTheme
 	selServicePort
+	selPortForward
 )
 
 const selMaxVisible = 12

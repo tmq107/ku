@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"charm.land/bubbles/v2/key"
@@ -117,6 +116,9 @@ type App struct {
 	logTarget         target
 	execTarget        target
 	portForwardTarget target
+	portForwardPorts  []k8s.ServicePort
+	portForwards      []portForward
+	nextPortForwardID int
 	themeBase         Theme // theme to restore on theme-picker cancel
 
 	logSession int
@@ -432,6 +434,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case servicePortsMsg:
 		return a.handleServicePorts(m)
 
+	case portForwardReadyMsg:
+		return a.handlePortForwardReady(m)
+
+	case portForwardDoneMsg:
+		return a.handlePortForwardDone(m)
+
 	case nodeDebugReadyMsg:
 		if m.client != a.client {
 			if m.pod != "" {
@@ -742,6 +750,7 @@ func (a App) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if msg.String() == "ctrl+c" {
 		a.logs.stop()
+		a.stopPortForwards()
 		return a, tea.Quit
 	}
 
@@ -793,6 +802,7 @@ func (a App) updateCockpit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, a.keys.Quit):
 		a.logs.stop()
+		a.stopPortForwards()
 		return a, tea.Quit
 	case key.Matches(msg, a.keys.Help):
 		a.help.reset()
@@ -841,6 +851,7 @@ func (a App) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, a.keys.Quit):
 		a.logs.stop()
+		a.stopPortForwards()
 		return a, tea.Quit
 	case key.Matches(msg, a.keys.Back):
 		// esc clears an applied filter; otherwise it is a no-op on the table.
@@ -1161,15 +1172,12 @@ func (a App) updateTerm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.screen = screenTable
 		return a, nil
 	}
-	// ctrl+\ detaches/cancels without killing ku; port-forward also lets the same
-	// action key stop the active forward.
-	if msg.String() == "ctrl+\\" || (a.term.detachStatus != "" && key.Matches(msg, a.keys.PortForward)) {
+	// ctrl+\ detaches/cancels without killing ku.
+	if msg.String() == "ctrl+\\" {
 		note := "shell detached"
 		if a.term.isEdit {
 			os.Remove(a.term.editPath) // cancelled: discard the unsaved edit
 			note = "edit cancelled"
-		} else if a.term.detachStatus != "" {
-			note = a.term.detachStatus
 		}
 		cleanup := a.term.onClose // e.g. delete the node debug pod
 		a.term.stop()
@@ -1490,6 +1498,7 @@ func (a App) handleServicePorts(m servicePortsMsg) (tea.Model, tea.Cmd) {
 	for _, p := range m.ports {
 		items = append(items, selItem{title: servicePortTitle(p), desc: servicePortDesc(p), id: p.ID()})
 	}
+	a.portForwardPorts = append([]k8s.ServicePort(nil), m.ports...)
 	a.sel.open(selServicePort, "Port-forward "+qualified(m.ns, m.name), "local:service-port", items, true)
 	a.overlay = overlaySelector
 	return a, nil
@@ -1615,46 +1624,6 @@ func (a App) startExec(cl *k8s.Client, ns, pod, container, title string, command
 		err := cl.ExecStream(ctx, ns, pod, container, command, em, em, q)
 		em.Close() // unblock the stream's stdin reader and the input goroutine
 		q.Close()
-		result.err = err
-		close(result.done)
-	}()
-
-	return a, tea.Batch(termTick(sess), waitTermDone(sess, result))
-}
-
-func (a App) startServicePortForward(spec k8s.PortForwardSpec) (tea.Model, tea.Cmd) {
-	target := a.portForwardTarget
-	a.term.stop()
-	a.termSession++
-	sess := a.termSession
-
-	cols, rows := termDims(a.width, a.bodyH())
-	em := vt.NewSafeEmulator(cols, rows)
-	ctx, cancel := context.WithCancel(context.Background())
-	stopCh := make(chan struct{})
-	var stopOnce sync.Once
-	stop := func() {
-		cancel()
-		stopOnce.Do(func() { close(stopCh) })
-	}
-	result := &termResult{done: make(chan struct{})}
-
-	t := newTermView(a.theme)
-	t.em = em
-	t.cancel = stop
-	t.result = result
-	t.session = sess
-	t.cols, t.rows = cols, rows
-	t.title = "port-forward service/" + qualified(target.ns, target.name)
-	t.detachStatus = "port-forward stopped"
-	a.term = t
-	a.overlay = overlayTerm
-
-	go func() {
-		w := terminalWriter{w: em}
-		ready := make(chan struct{})
-		err := a.client.PortForwardService(ctx, target.ns, target.name, spec, stopCh, ready, w, w)
-		em.Close()
 		result.err = err
 		close(result.done)
 	}()
@@ -2067,6 +2036,7 @@ func (a App) toggleAllNS() (tea.Model, tea.Cmd) {
 
 func (a App) adoptClient(cl *k8s.Client) (tea.Model, tea.Cmd) {
 	a.logs.stop()
+	a.stopPortForwards()
 	a.logSession++
 	a.client = cl
 	// Rebuild the left nav from the new cluster's catalog: available resource
@@ -2157,8 +2127,13 @@ func (a App) openPalette() (tea.Model, tea.Cmd) {
 	if !a.readOnly {
 		editModeItem = selItem{title: "Return to read-only", desc: "edit mode", id: "cmd:editmode"}
 	}
+	portForwardDesc := "none"
+	if n := len(a.portForwards); n > 0 {
+		portForwardDesc = itoa(n) + " active"
+	}
 	items = append(items,
 		editModeItem,
+		selItem{title: "Port-forwards", desc: portForwardDesc, id: "cmd:portforwards"},
 		selItem{title: "Open Kubernetes docs", desc: "O", id: "cmd:docs"},
 		selItem{title: "Jump to resource", desc: ":", id: "cmd:jump"},
 		selItem{title: "Filter list", desc: "/", id: "cmd:filter"},
@@ -2318,6 +2293,12 @@ func (a App) applySelection(res selResult) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a.startServicePortForward(spec)
+	case selPortForward:
+		id, err := strconv.Atoi(res.id)
+		if err != nil {
+			return a, nil
+		}
+		return a.stopPortForward(id)
 	}
 	return a, nil
 }
@@ -2368,6 +2349,8 @@ func (a App) applyPalette(id string) (tea.Model, tea.Cmd) {
 		return a.toggleEditMode()
 	case "cmd:kubectl":
 		return a.openCommand()
+	case "cmd:portforwards":
+		return a.openPortForwards()
 	case "cmd:docs":
 		return a.openDocs()
 	case "cmd:refresh":
@@ -2392,6 +2375,7 @@ func (a App) applyPalette(id string) (tea.Model, tea.Cmd) {
 		return a, nil
 	case "cmd:quit":
 		a.logs.stop()
+		a.stopPortForwards()
 		return a, tea.Quit
 	}
 	return a, nil
@@ -2571,6 +2555,9 @@ func (a App) headerView() string {
 	if a.dev {
 		chips = append(chips, chip("mode", "dev"))
 	}
+	if n := len(a.portForwards); n > 0 {
+		chips = append(chips, chip("pf", itoa(n)))
+	}
 	// Surface an applied filter so a narrowed list never looks like the whole set.
 	if a.table.filterActive() && !a.table.filtering {
 		chips = append(chips, th.HeaderKey.Render("filter ")+th.Warn.Render("/"+truncate(a.table.filterValue(), 24)))
@@ -2691,12 +2678,7 @@ const creatorHandle = "x.com/iamdothash"
 func (a App) hints() []hint {
 	switch a.overlay {
 	case overlayTerm:
-		termKey, termAction := "ctrl+\\", "detach"
-		if a.term.detachStatus != "" {
-			termKey = "p/ctrl+\\"
-			termAction = "stop"
-		}
-		return []hint{{"keys", "session"}, {termKey, termAction}}
+		return []hint{{"keys", "session"}, {"ctrl+\\", "detach"}}
 	case overlaySelector:
 		return []hint{{"↑↓", "move"}, {"enter", "select"}, {"esc", "cancel"}}
 	case overlayHelp:

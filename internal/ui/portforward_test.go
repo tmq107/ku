@@ -95,30 +95,74 @@ func TestHandleServicePortsOpensSelector(t *testing.T) {
 	}
 }
 
-func TestPortForwardShortcutStopsActiveForward(t *testing.T) {
-	stopped := false
+func TestOpenPortForwardsShowsActiveForward(t *testing.T) {
 	app := App{
-		keys:    defaultKeys(),
-		screen:  screenTable,
-		overlay: overlayTerm,
-		term: termView{
-			detachStatus: "port-forward stopped",
-			cancel:       func() { stopped = true },
-		},
+		theme: PickTheme("ansi"),
+		portForwards: []portForward{{
+			id:           4,
+			target:       target{ns: "default", name: "api"},
+			serviceLabel: "http",
+			localPort:    8080,
+			ready:        true,
+		}},
 	}
+	app.sel = newSelector(app.theme)
 
-	model, cmd := app.updateTerm(mkKey("p"))
+	model, cmd := app.openPortForwards()
 	got := model.(App)
 	if cmd != nil {
-		t.Fatal("port-forward shortcut returned unexpected command")
+		t.Fatal("openPortForwards returned command")
+	}
+	if got.overlay != overlaySelector || got.sel.kind != selPortForward {
+		t.Fatalf("overlay/kind = %v/%v, want port-forward selector", got.overlay, got.sel.kind)
+	}
+	item, ok := got.sel.current()
+	if !ok || item.id != "4" || item.title != "localhost:8080 -> service/default/api:http" || item.desc != "active" {
+		t.Fatalf("current selector item = %+v ok=%v", item, ok)
+	}
+}
+
+func TestStopPortForwardMarksStopping(t *testing.T) {
+	stopped := false
+	app := App{portForwards: []portForward{{
+		id:           7,
+		target:       target{ns: "default", name: "api"},
+		serviceLabel: "http",
+		localPort:    8080,
+		stop:         func() { stopped = true },
+	}}}
+
+	model, cmd := app.stopPortForward(7)
+	got := model.(App)
+	if cmd != nil {
+		t.Fatal("stopPortForward returned command")
 	}
 	if !stopped {
-		t.Fatal("port-forward shortcut did not stop the active forward")
+		t.Fatal("stopPortForward did not call stop")
 	}
-	if got.overlay != overlayNone {
-		t.Fatalf("overlay = %v, want overlayNone", got.overlay)
+	if !got.portForwards[0].stopping {
+		t.Fatal("port-forward was not marked stopping")
 	}
-	if got.status != "port-forward stopped" || got.statusErr {
-		t.Fatalf("status = %q err=%t, want stopped status", got.status, got.statusErr)
+	if got.status != "stopping port-forward: localhost:8080 -> service/default/api:http" || got.statusErr {
+		t.Fatalf("status = %q err=%t", got.status, got.statusErr)
+	}
+}
+
+func TestPortForwardDoneRemovesForward(t *testing.T) {
+	app := App{portForwards: []portForward{
+		{id: 1, target: target{ns: "default", name: "api"}, serviceLabel: "http", localPort: 8080, stopping: true},
+		{id: 2, target: target{ns: "default", name: "metrics"}, serviceLabel: "http", localPort: 9090},
+	}}
+
+	model, cmd := app.handlePortForwardDone(portForwardDoneMsg{id: 1})
+	got := model.(App)
+	if cmd != nil {
+		t.Fatal("handlePortForwardDone returned command")
+	}
+	if len(got.portForwards) != 1 || got.portForwards[0].id != 2 {
+		t.Fatalf("portForwards = %+v, want only id 2", got.portForwards)
+	}
+	if got.status != "port-forward stopped: localhost:8080 -> service/default/api:http" || got.statusErr {
+		t.Fatalf("status = %q err=%t", got.status, got.statusErr)
 	}
 }

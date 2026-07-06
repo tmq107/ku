@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"io"
 	"strings"
 	"time"
 
@@ -42,9 +41,8 @@ type termView struct {
 	cols    int
 	rows    int
 
-	finished     bool
-	status       string
-	detachStatus string
+	finished bool
+	status   string
 
 	// Edit-session context: when set, the file is applied on exit.
 	isEdit       bool
@@ -105,8 +103,6 @@ func (t termView) View(width, bodyH int) string {
 	hint := "ctrl+\\ detach"
 	if t.isEdit {
 		hint = "save & quit to apply · ctrl+\\ cancel"
-	} else if t.detachStatus != "" {
-		hint = "p or ctrl+\\ stop"
 	}
 	if t.finished {
 		hint = t.status
@@ -158,20 +154,6 @@ func overlayCursor(line string, col, width int) string {
 	}
 	after := ansi.Cut(line, col+1, width)
 	return before + cursorStyle.Render(ch) + after
-}
-
-type terminalWriter struct{ w io.Writer }
-
-func (w terminalWriter) Write(p []byte) (int, error) {
-	buf := make([]byte, 0, len(p)+8)
-	for i, b := range p {
-		if b == '\n' && (i == 0 || p[i-1] != '\r') {
-			buf = append(buf, '\r')
-		}
-		buf = append(buf, b)
-	}
-	_, err := w.w.Write(buf)
-	return len(p), err
 }
 
 func termTick(session int) tea.Cmd {
