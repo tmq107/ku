@@ -109,4 +109,7 @@ Press `p` on a Service in edit mode. Pick a Service port, or type
 - `8080:http` forwards local port `8080` to Service port `http`.
 - `18080:80` forwards local port `18080` to Service port `80`.
 
+ClusterIP and NodePort Services are forwarded the same way. If you pick port
+`80` directly, ku tries local port `80`; type `8080:80` to use local `8080`.
+
 The forward runs in an overlay. Press `p` again, or `Ctrl+\`, to stop it.

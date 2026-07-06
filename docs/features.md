@@ -90,9 +90,12 @@ or type `local:service-port` to set the local machine port yourself:
 - `8080:http` forwards local port `8080` to Service port `http`.
 - `18080:80` forwards local port `18080` to Service port `80`.
 
-ku resolves the Service selector to a running backing pod, resolves named
-targetPorts when needed, and starts a local TCP forward in an overlay. Press `p`
-again, or `Ctrl+\`, to stop it.
+ClusterIP and NodePort Services work the same way. ku resolves the Service
+selector to a running backing pod, resolves named targetPorts when needed, and
+starts a local TCP forward in an overlay. If you pick a port without typing a
+local port, the local port defaults to the Service port. For low ports like
+`80`, type `8080:80` so the local bind uses `8080` instead. Press `p` again, or
+`Ctrl+\`, to stop it.
 
 ## Shell into a pod or node
 
