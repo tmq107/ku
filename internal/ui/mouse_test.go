@@ -6,6 +6,45 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+// logsTestApp builds an App parked on the logs screen with n lines and the view
+// scrolled to the top, so viewport row r maps to line r.
+func logsTestApp(t *testing.T, n int) App {
+	t.Helper()
+	th := PickTheme("ansi")
+	app := App{theme: th, width: 80, height: 24, screen: screenLogs, focus: focusMain, keys: defaultKeys()}
+	app.logs = newLogView(th)
+	app.logs.setSize(paneContentWidth(app.width), paneContentHeight(app.bodyH()))
+	for i := 0; i < n; i++ {
+		app.logs.appendLine("line-" + itoa(i))
+	}
+	app.logs.follow = false
+	app.logs.vp.GotoTop()
+	return app
+}
+
+func TestMouseIgnoredOutsideShell(t *testing.T) {
+	app := logsTestApp(t, 5)
+	app.logs.follow = true
+
+	m, cmd := app.Update(tea.MouseClickMsg{X: 2, Y: 4, Button: tea.MouseLeft})
+	app = m.(App)
+	if cmd != nil {
+		t.Fatal("mouse click outside shell returned command")
+	}
+	if app.logs.selecting {
+		t.Fatal("mouse click outside shell should not start selection")
+	}
+	if !app.logs.follow {
+		t.Fatal("mouse click outside shell should not pause log follow")
+	}
+
+	m, cmd = app.Update(tea.MouseWheelMsg{X: 2, Y: 4, Button: tea.MouseWheelUp})
+	app = m.(App)
+	if cmd != nil {
+		t.Fatal("mouse wheel outside shell returned command")
+	}
+}
+
 func TestTableMouseHitTesting(t *testing.T) {
 	th := PickTheme("ansi")
 	tv := newTableView(th)
@@ -26,29 +65,29 @@ func TestTableMouseHitTesting(t *testing.T) {
 	}
 }
 
-func TestAppMouseSelectsTableRowsAndSortsHeaders(t *testing.T) {
+func TestTableMouseEventsIgnored(t *testing.T) {
 	th := PickTheme("ansi")
 	app := App{theme: th, width: 80, height: 24, screen: screenTable, focus: focusMain}
 	app.table = newTableView(th)
 	app.relayout()
 	app.table.setData(fakeTable())
 
-	m, _ := app.Update(tea.MouseClickMsg{X: 2, Y: 4, Button: tea.MouseLeft})
+	m, cmd := app.Update(tea.MouseClickMsg{X: 2, Y: 4, Button: tea.MouseLeft})
 	app = m.(App)
-	if app.table.cursor != 1 {
-		t.Fatalf("mouse row click selected cursor %d; want 1", app.table.cursor)
+	if cmd != nil {
+		t.Fatal("mouse click returned command")
 	}
-
-	m, _ = app.Update(tea.MouseClickMsg{X: 2, Y: 2, Button: tea.MouseLeft})
-	app = m.(App)
-	if app.table.sortCol != 0 {
-		t.Fatalf("mouse header click sortCol = %d; want 0", app.table.sortCol)
-	}
-
-	m, _ = app.Update(tea.MouseWheelMsg{X: 2, Y: 4, Button: tea.MouseWheelUp})
-	app = m.(App)
 	if app.table.cursor != 0 {
-		t.Fatalf("mouse wheel selected cursor %d; want 0", app.table.cursor)
+		t.Fatalf("mouse row click changed cursor to %d", app.table.cursor)
+	}
+
+	m, cmd = app.Update(tea.MouseClickMsg{X: 2, Y: 2, Button: tea.MouseLeft})
+	app = m.(App)
+	if cmd != nil {
+		t.Fatal("mouse header click returned command")
+	}
+	if app.table.sortCol != -1 {
+		t.Fatalf("mouse header click changed sortCol to %d", app.table.sortCol)
 	}
 }
 

@@ -78,27 +78,25 @@ until edit mode is enabled with `Shift+E` or the command palette.
 
 ## Selecting and copying logs
 
-Two ways to mark and copy log lines:
+Press `v` to enter selection mode, move the cursor with `↑` / `↓` (or `g` / `G`
+and the page keys), press `m` to mark the start, then move to extend the range
+and `y` or `Enter` to copy it to the clipboard (via OSC 52, so it works over SSH
+too). Without marking, `y` copies the cursor line. `esc` cancels.
 
-- Keyboard: press `v` to enter selection mode, move the cursor with `↑` / `↓`
-  (or `g` / `G` and the page keys), press `m` to mark the start, then move to
-  extend the range and `y` or `Enter` to copy it to the clipboard (via OSC 52,
-  so it works over SSH too). Without marking, `y` copies the cursor line. `esc`
-  cancels.
-- Mouse: the logs view releases the mouse, so your terminal's own click-and-drag
-  selection and copy work directly. (Keyboard scrolling still applies; the mouse
-  wheel does not scroll here.)
+Selection is whole-line and copies the full, untruncated line text with terminal
+styling stripped, so no escape codes end up on the clipboard.
 
 To grab the whole buffer at once, press `c` to copy every buffered line to the
 clipboard (the raw lines, so an active filter never hides anything). Press
 `Ctrl+l` to clear the on-screen buffer; the stream keeps running, so new lines
 flow back in right away.
 
-## Shell paste and selection
+## Shell paste and mouse
 
 In shell mode, paste with `Ctrl+Shift+V`. `Ctrl+V` is not a paste shortcut; it is
-sent to the running shell/program. Mouse capture is released in shell mode, so
-your terminal's normal click-and-drag text selection works inside the shell.
+sent to the running shell/program. Mouse input is only captured in shell mode, so
+terminal programs that enable mouse tracking can receive it. The shell keeps the
+same bordered TUI frame as the rest of ku.
 
 ## Service port-forward
 

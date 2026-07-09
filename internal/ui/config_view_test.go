@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -205,6 +206,62 @@ func TestRenderConfigPutsStatusBeforeOverview(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// configView is now a pager: it must re-lay-out the width-sensitive summary on
+// resize rather than blank or keep the stale width, and it supports copy.
+func TestConfigViewReRendersOnResize(t *testing.T) {
+	c := newConfigView(PickTheme("ansi"))
+	c.setSize(80, 20)
+	res := k8s.ResourceInfo{Resource: "secrets", Kind: "Secret"}
+	obj := map[string]interface{}{
+		"type": "Opaque",
+		"data": map[string]interface{}{"password": "aHVudGVyMg=="},
+	}
+	c.setObject(res, "secret/db", obj, nil)
+	if strings.TrimSpace(ansi.Strip(c.vp.View())) == "" {
+		t.Fatal("config view is blank after setObject")
+	}
+
+	c.setSize(48, 12) // narrower: must re-render, not blank or overflow
+	view := c.vp.View()
+	if strings.TrimSpace(ansi.Strip(view)) == "" {
+		t.Fatal("config view blanked after resize")
+	}
+	for _, ln := range strings.Split(view, "\n") {
+		if w := ansi.StringWidth(ln); w > 48 {
+			t.Fatalf("resized config line exceeds width 48 (%d): %q", w, ansi.Strip(ln))
+		}
+	}
+
+	// copyAll returns the plain summary (ANSI stripped).
+	if strings.Contains(c.copyAll(), "\x1b") {
+		t.Fatal("config copyAll must strip ANSI")
+	}
+}
+
+func TestConfigViewResizePreservesScroll(t *testing.T) {
+	c := newConfigView(PickTheme("ansi"))
+	c.setSize(80, 8)
+	data := make(map[string]interface{}, 30)
+	for i := 0; i < 30; i++ {
+		data[fmt.Sprintf("key-%02d", i)] = strings.Repeat("value", 4)
+	}
+	obj := map[string]interface{}{
+		"data": data,
+	}
+	c.setObject(k8s.ResourceInfo{Resource: "configmaps", Kind: "ConfigMap"}, "configmap/app", obj, nil)
+	c.vp.SetYOffset(5)
+	before := c.vp.YOffset()
+	if before == 0 {
+		t.Fatal("precondition failed: config view did not scroll")
+	}
+
+	c.setSize(72, 8)
+
+	if got := c.vp.YOffset(); got != before {
+		t.Fatalf("resize changed YOffset from %d to %d", before, got)
 	}
 }
 
