@@ -75,6 +75,54 @@ func TestServicePodPrefersReadyRunningPod(t *testing.T) {
 	}
 }
 
+func TestServiceBackendsListsSelectedPods(t *testing.T) {
+	cs := fake.NewSimpleClientset(
+		&corev1.Service{
+			ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default"},
+			Spec:       corev1.ServiceSpec{Selector: map[string]string{"app": "api"}},
+		},
+		servicePod("z-not-ready", map[string]string{"app": "api"}, corev1.PodRunning, false),
+		servicePod("a-ready", map[string]string{"app": "api"}, corev1.PodRunning, true),
+		servicePod("b-pending", map[string]string{"app": "api"}, corev1.PodPending, false),
+	)
+	c := &Client{clientset: cs}
+
+	info, err := c.ServiceBackends(context.Background(), "default", "api")
+	if err != nil {
+		t.Fatalf("ServiceBackends: %v", err)
+	}
+	if info.Selector != "app=api" {
+		t.Fatalf("selector = %q, want app=api", info.Selector)
+	}
+	if info.Ready != 1 || info.Running != 2 {
+		t.Fatalf("counts = ready %d running %d, want 1/2", info.Ready, info.Running)
+	}
+	if len(info.Pods) != 3 {
+		t.Fatalf("len(Pods) = %d, want 3", len(info.Pods))
+	}
+	if info.Pods[0].Name != "a-ready" || !info.Pods[0].Ready {
+		t.Fatalf("first backend = %+v, want ready pod first", info.Pods[0])
+	}
+	if info.Pods[1].Name != "z-not-ready" {
+		t.Fatalf("second backend = %+v, want z-not-ready", info.Pods[1])
+	}
+	if info.Pods[2].Name != "b-pending" {
+		t.Fatalf("last backend = %+v, want b-pending", info.Pods[2])
+	}
+}
+
+func TestServiceBackendsNoSelector(t *testing.T) {
+	cs := fake.NewSimpleClientset(&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default"}})
+	c := &Client{clientset: cs}
+	info, err := c.ServiceBackends(context.Background(), "default", "api")
+	if err != nil {
+		t.Fatalf("ServiceBackends: %v", err)
+	}
+	if info.Selector != "" || len(info.Pods) != 0 || info.Ready != 0 || info.Running != 0 {
+		t.Fatalf("expected empty backend info, got %+v", info)
+	}
+}
+
 func TestServiceTargetPortNumber(t *testing.T) {
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api"}, Spec: corev1.PodSpec{Containers: []corev1.Container{{
 		Name:  "web",

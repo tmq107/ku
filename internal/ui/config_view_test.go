@@ -20,7 +20,7 @@ func TestRenderConfigDecodesSecretData(t *testing.T) {
 		},
 	}
 
-	out := renderConfig(th, res, obj, 80, nil)
+	out := renderConfig(th, res, obj, 80, nil, nil, nil)
 	if !strings.Contains(out, "Decoded Data") {
 		t.Fatalf("decoded data section missing from config view:\n%s", out)
 	}
@@ -71,7 +71,7 @@ func TestRenderConfigShowsPodUsageAndIssues(t *testing.T) {
 	}
 	usage := &k8s.PodUsage{CPUUsedMilli: 25, MemUsedBytes: 64 * 1024 * 1024}
 
-	out := renderConfig(th, res, obj, 80, usage)
+	out := renderConfig(th, res, obj, 80, usage, nil, nil)
 	for _, want := range []string{"Usage", "25m live", "64Mi live", "cpu 100m", "mem 128Mi", "Health", "CrashLoopBackOff", "restarts", "3"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("config view missing %q:\n%s", want, out)
@@ -132,7 +132,7 @@ func TestRenderConfigShowsIngressRuleDetails(t *testing.T) {
 		},
 	}
 
-	out := renderConfig(th, res, obj, 140, nil)
+	out := renderConfig(th, res, obj, 140, nil, nil, nil)
 	for _, want := range []string{
 		"class", "nginx",
 		"default", "fallback:8080",
@@ -194,7 +194,7 @@ func TestRenderConfigPutsStatusBeforeOverview(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out := renderConfig(th, tt.res, tt.obj, 80, nil)
+			out := renderConfig(th, tt.res, tt.obj, 80, nil, nil, nil)
 			statusAt := strings.Index(out, "Status")
 			overviewAt := strings.Index(out, "Overview")
 			if statusAt < 0 || overviewAt < 0 || statusAt > overviewAt {
@@ -219,7 +219,7 @@ func TestConfigViewReRendersOnResize(t *testing.T) {
 		"type": "Opaque",
 		"data": map[string]interface{}{"password": "aHVudGVyMg=="},
 	}
-	c.setObject(res, "secret/db", obj, nil)
+	c.setObject(res, "secret/db", obj, nil, nil, nil)
 	if strings.TrimSpace(ansi.Strip(c.vp.View())) == "" {
 		t.Fatal("config view is blank after setObject")
 	}
@@ -251,7 +251,7 @@ func TestConfigViewResizePreservesScroll(t *testing.T) {
 	obj := map[string]interface{}{
 		"data": data,
 	}
-	c.setObject(k8s.ResourceInfo{Resource: "configmaps", Kind: "ConfigMap"}, "configmap/app", obj, nil)
+	c.setObject(k8s.ResourceInfo{Resource: "configmaps", Kind: "ConfigMap"}, "configmap/app", obj, nil, nil, nil)
 	c.vp.SetYOffset(5)
 	before := c.vp.YOffset()
 	if before == 0 {
@@ -275,7 +275,7 @@ func TestRenderConfigSeparatesLongSecretKeys(t *testing.T) {
 		},
 	}
 
-	out := renderConfig(th, res, obj, 72, nil)
+	out := renderConfig(th, res, obj, 72, nil, nil, nil)
 	plain := ansi.Strip(out)
 	if strings.Contains(plain, "POSTGRES_REPLICATION_PASSWORDreplicatorpass") {
 		t.Fatalf("long secret key was not separated from value:\n%s", out)

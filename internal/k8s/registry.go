@@ -87,6 +87,11 @@ func (r ResourceInfo) IsNodes() bool {
 	return r.Group == "" && r.Resource == "nodes"
 }
 
+// IsNamespaces reports whether this is the core Namespace list.
+func (r ResourceInfo) IsNamespaces() bool {
+	return r.Group == "" && r.Resource == "namespaces"
+}
+
 // Registry is an in-memory catalog of discovered resources with alias lookup.
 type Registry struct {
 	all   []ResourceInfo

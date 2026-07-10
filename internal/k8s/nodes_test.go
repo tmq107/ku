@@ -31,6 +31,45 @@ func TestCordonUncordonRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNodePodsListsScheduledPods(t *testing.T) {
+	cs := fake.NewSimpleClientset(
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "ns2"}, Spec: corev1.PodSpec{NodeName: "node-1"}, Status: corev1.PodStatus{Phase: corev1.PodPending}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "b", Namespace: "ns1"}, Spec: corev1.PodSpec{NodeName: "node-1"}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "ns1"}, Spec: corev1.PodSpec{NodeName: "node-1"}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "ns1"}, Spec: corev1.PodSpec{NodeName: "node-2"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}},
+	)
+	c := &Client{clientset: cs}
+	info, err := c.NodePods(context.Background(), "node-1")
+	if err != nil {
+		t.Fatalf("NodePods: %v", err)
+	}
+	if info.Ready != 1 || info.Running != 2 || len(info.Pods) != 3 {
+		t.Fatalf("counts = ready %d running %d len %d, want 1/2/3", info.Ready, info.Running, len(info.Pods))
+	}
+	if info.Pods[0].Namespace != "ns1" || info.Pods[0].Name != "a" || !info.Pods[0].Ready {
+		t.Fatalf("first pod = %+v, want ns1/a ready", info.Pods[0])
+	}
+}
+
+func TestNamespacePodsListsPods(t *testing.T) {
+	cs := fake.NewSimpleClientset(
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "b", Namespace: "ns1"}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "ns1"}, Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "ns2"}, Status: corev1.PodStatus{Phase: corev1.PodRunning}},
+	)
+	c := &Client{clientset: cs}
+	info, err := c.NamespacePods(context.Background(), "ns1")
+	if err != nil {
+		t.Fatalf("NamespacePods: %v", err)
+	}
+	if info.Ready != 1 || info.Running != 2 || len(info.Pods) != 2 {
+		t.Fatalf("counts = ready %d running %d len %d, want 1/2/2", info.Ready, info.Running, len(info.Pods))
+	}
+	if info.Pods[0].Name != "a" {
+		t.Fatalf("first pod = %+v, want a", info.Pods[0])
+	}
+}
+
 func TestDrainSkipReason(t *testing.T) {
 	tests := []struct {
 		name       string

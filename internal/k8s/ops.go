@@ -77,6 +77,7 @@ func decodeSecretData(obj map[string]interface{}) {
 	}
 }
 
+
 // RolloutRestart triggers a rolling restart of a workload by stamping the pod
 // template with a restartedAt annotation, the same mechanism kubectl uses.
 func (c *Client) RolloutRestart(ctx context.Context, res ResourceInfo, namespace, name string) error {

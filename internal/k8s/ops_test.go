@@ -33,3 +33,4 @@ func TestApplyRejectsNamespaceChange(t *testing.T) {
 		})
 	}
 }
+

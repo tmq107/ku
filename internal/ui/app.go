@@ -117,6 +117,7 @@ type App struct {
 	logTarget         target
 	execTarget        target
 	portForwardTarget target
+	serviceTarget     target
 	portForwardPorts  []k8s.ServicePort
 	portForwards      []portForward
 	nextPortForwardID int
@@ -409,7 +410,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.err != nil {
 				a.config.setMessage(m.title, "Error: "+m.err.Error())
 			} else {
-				a.config.setObject(m.res, m.title, m.obj, m.usage)
+				a.config.setObject(m.res, m.title, m.obj, m.usage, m.service, m.nodePods)
 			}
 		}
 		return a, nil
@@ -874,9 +875,14 @@ func (a App) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.openDetail()
 	case key.Matches(msg, a.keys.Logs):
 		return a.openLogs()
+	case key.Matches(msg, a.keys.Backends):
+		return a.openServiceBackends()
 	case key.Matches(msg, a.keys.DeployLogs):
 		return a.openDeploymentLogs()
 	case key.Matches(msg, a.keys.PortForward):
+		if a.res.IsNodes() || a.res.IsNamespaces() {
+			return a.openNodePods()
+		}
 		return a.openServicePortForward()
 	case key.Matches(msg, a.keys.Edit):
 		return a.openEdit()
@@ -1000,7 +1006,14 @@ func (a App) updateConfig(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.editTarget(a.configTarget)
 	case key.Matches(msg, a.keys.DeployLogs):
 		return a.openDeploymentLogsTarget(a.configTarget)
+	case key.Matches(msg, a.keys.Logs):
+		return a.openLogsTarget(a.configTarget)
+	case key.Matches(msg, a.keys.Backends):
+		return a.openServiceBackendsTarget(a.configTarget)
 	case key.Matches(msg, a.keys.PortForward):
+		if a.configTarget.res.IsNodes() || a.configTarget.res.IsNamespaces() {
+			return a.openNodePodsTarget(a.configTarget)
+		}
 		return a.openServicePortForwardTarget(a.configTarget)
 	case key.Matches(msg, a.keys.Trigger):
 		return a.openTriggerJobTarget(a.configTarget)
@@ -1029,7 +1042,14 @@ func (a App) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return a.editTarget(a.detailTarget)
 	case key.Matches(msg, a.keys.DeployLogs):
 		return a.openDeploymentLogsTarget(a.detailTarget)
+	case key.Matches(msg, a.keys.Logs):
+		return a.openLogsTarget(a.detailTarget)
+	case key.Matches(msg, a.keys.Backends):
+		return a.openServiceBackendsTarget(a.detailTarget)
 	case key.Matches(msg, a.keys.PortForward):
+		if a.detailTarget.res.IsNodes() || a.detailTarget.res.IsNamespaces() {
+			return a.openNodePodsTarget(a.detailTarget)
+		}
 		return a.openServicePortForwardTarget(a.detailTarget)
 	case key.Matches(msg, a.keys.Trigger):
 		return a.openTriggerJobTarget(a.detailTarget)
@@ -1300,8 +1320,7 @@ func (a App) openLogs() (tea.Model, tea.Cmd) {
 	if !ok {
 		return a, nil
 	}
-	a.logTarget = target{ns: row.Namespace, name: row.Name}
-	return a, containersCmd(a.client, row.Namespace, row.Name, false)
+	return a.openLogsTarget(target{res: a.res, ns: row.Namespace, name: row.Name})
 }
 
 func (a App) openDeploymentLogs() (tea.Model, tea.Cmd) {
@@ -1818,6 +1837,159 @@ func (a App) openTriggerJob() (tea.Model, tea.Cmd) {
 	return a.openTriggerJobTarget(target{res: a.res, ns: row.Namespace, name: row.Name})
 }
 
+func (a App) openLogsTarget(t target) (tea.Model, tea.Cmd) {
+	if !t.res.IsPod() {
+		a.setStatus("logs: switch to pods first", true)
+		return a, nil
+	}
+	if t.name == "" {
+		return a, nil
+	}
+	ns := t.ns
+	if ns == "" {
+		ns = a.namespace
+	}
+	if ns == "" {
+		a.setStatus("logs: pod namespace unavailable", true)
+		return a, nil
+	}
+	a.logTarget = target{res: t.res, ns: ns, name: t.name}
+	return a, containersCmd(a.client, ns, t.name, false)
+}
+
+func (a App) openServiceBackends() (tea.Model, tea.Cmd) {
+	row, ok := a.table.selected()
+	if !ok {
+		return a, nil
+	}
+	return a.openServiceBackendsTarget(target{res: a.res, ns: row.Namespace, name: row.Name})
+}
+
+func (a App) openServiceBackendsTarget(t target) (tea.Model, tea.Cmd) {
+	if t.name == "" {
+		return a, nil
+	}
+	if !t.res.IsService() {
+		a.setStatus("backends: switch to services first", true)
+		return a, nil
+	}
+	ns := t.ns
+	if ns == "" {
+		ns = a.namespace
+	}
+	if ns == "" {
+		a.setStatus("backends: service namespace unavailable", true)
+		return a, nil
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+	info, err := a.client.ServiceBackends(ctx, ns, t.name)
+	if err != nil {
+		a.setStatus("backends: "+trimErr(err), true)
+		return a, nil
+	}
+	a.serviceTarget = target{res: t.res, ns: ns, name: t.name}
+	if info == nil || info.Selector == "" {
+		a.setStatus("backends: service has no selector", true)
+		return a, nil
+	}
+	if len(info.Pods) == 0 {
+		a.setStatus("backends: no matching pods", true)
+		return a, nil
+	}
+	items := make([]selItem, 0, len(info.Pods))
+	for _, pod := range info.Pods {
+		desc := pod.Phase
+		if pod.Ready {
+			desc += " \u00b7 Ready"
+		}
+		if pod.PodIP != "" {
+			desc += " \u00b7 " + pod.PodIP
+		}
+		items = append(items, selItem{title: pod.Name, desc: desc, id: pod.Name})
+	}
+	a.sel.open(selServiceBackend, "Backends \u2014 "+qualified(ns, t.name), "pod", items, false)
+	a.overlay = overlaySelector
+	return a, nil
+}
+
+func (a App) openNodePods() (tea.Model, tea.Cmd) {
+	row, ok := a.table.selected()
+	if !ok {
+		return a, nil
+	}
+	return a.openNodePodsTarget(target{res: a.res, name: row.Name})
+}
+
+func (a App) openNodePodsTarget(t target) (tea.Model, tea.Cmd) {
+	if t.name == "" {
+		return a, nil
+	}
+	if !t.res.IsNodes() && !t.res.IsNamespaces() {
+		a.setStatus("pods: switch to nodes or namespaces first", true)
+		return a, nil
+	}
+	ctx, cancel := opCtx()
+	defer cancel()
+	var (
+		info *k8s.NodePods
+		err  error
+	)
+	if t.res.IsNamespaces() {
+		info, err = a.client.NamespacePods(ctx, t.name)
+	} else {
+		info, err = a.client.NodePods(ctx, t.name)
+	}
+	if err != nil {
+		a.setStatus("pods: "+trimErr(err), true)
+		return a, nil
+	}
+	if info == nil || len(info.Pods) == 0 {
+		a.setStatus("pods: no pods scheduled on node", true)
+		return a, nil
+	}
+	a.serviceTarget = target{res: t.res, name: t.name}
+	items := make([]selItem, 0, len(info.Pods))
+	for _, pod := range info.Pods {
+		desc := pod.Phase
+		items = append(items, selItem{title: pod.Namespace + "/" + pod.Name, desc: desc, id: pod.Namespace + "/" + pod.Name})
+	}
+	title := "Pods \u2014 " + t.name
+	if t.res.IsNamespaces() {
+		title = "Namespace pods \u2014 " + t.name
+	}
+	a.sel.open(selServiceBackend, title, "pod", items, false)
+	a.overlay = overlaySelector
+	return a, nil
+}
+
+func (a App) openBackendPod(name string) (tea.Model, tea.Cmd) {
+	if name == "" {
+		return a, nil
+	}
+	ns := a.serviceTarget.ns
+	podName := name
+	if strings.Contains(name, "/") {
+		parts := strings.SplitN(name, "/", 2)
+		ns, podName = parts[0], parts[1]
+	}
+	pods := k8s.ResourceInfo{Resource: "pods", Kind: "Pod", Singular: "pod", Namespaced: true}
+	if a.client != nil && a.client.Registry() != nil {
+		if ri, ok := a.client.Registry().Resolve("pods"); ok {
+			pods = ri
+		}
+	}
+	a.res = pods
+	a.screen = screenTable
+	a.focus = focusMain
+	a.sidebar.syncTo(pods.Key())
+	a.table.stopFilter(true)
+	a.table.resetSort()
+	a.table.resetHScroll()
+	a.table.setData(nil)
+	return a.openConfigTarget(target{res: pods, ns: ns, name: podName})
+}
+
 func (a App) openServicePortForward() (tea.Model, tea.Cmd) {
 	row, ok := a.table.selected()
 	if !ok {
@@ -2041,8 +2213,17 @@ func (a App) openPalette() (tea.Model, tea.Cmd) {
 				items = append(items, selItem{title: "Shell into pod", desc: "s", id: "act:shell"})
 			}
 		}
-		if writes && a.res.IsService() {
-			items = append(items, selItem{title: "Port-forward service", desc: "p", id: "act:portforward"})
+		if a.res.IsService() {
+			items = append(items, selItem{title: "Show backing pods", desc: "b", id: "act:backends"})
+			if writes {
+				items = append(items, selItem{title: "Port-forward service", desc: "p", id: "act:portforward"})
+			}
+		}
+		if a.res.IsNodes() {
+			items = append(items, selItem{title: "Show node pods", desc: "p", id: "act:nodepods"})
+		}
+		if a.res.IsNamespaces() {
+			items = append(items, selItem{title: "Show namespace pods", desc: "p", id: "act:nodepods"})
 		}
 		if a.res.IsDeployment() {
 			items = append(items, selItem{title: "Follow deployment logs", desc: "L", id: "act:deploylogs"})
@@ -2223,6 +2404,8 @@ func (a App) applySelection(res selResult) (tea.Model, tea.Cmd) {
 		a.applyTheme(buildTheme(res.id, a.theme.Dark))
 		a.persist()
 		return a, nil
+	case selServiceBackend:
+		return a.openBackendPod(res.id)
 	case selServicePort:
 		id := res.id
 		if strings.Contains(res.value, ":") {
@@ -2268,6 +2451,10 @@ func (a App) applyPalette(id string) (tea.Model, tea.Cmd) {
 		return a.openShell()
 	case "act:portforward":
 		return a.openServicePortForward()
+	case "act:backends":
+		return a.openServiceBackends()
+	case "act:nodepods":
+		return a.openNodePods()
 	case "act:nodeshell":
 		return a.openNodeShell()
 	case "act:cordon":
@@ -2642,11 +2829,20 @@ func (a App) hints() []hint {
 	switch a.screen {
 	case screenConfig:
 		h := []hint{{"↑↓", "scroll"}, {"d", "describe"}}
+		if a.configTarget.res.IsPod() {
+			h = append(h, hint{"l", "logs"})
+		}
 		if a.configTarget.res.IsDeployment() {
 			h = append(h, hint{"L", "all logs"})
 		}
+		if a.configTarget.res.IsService() {
+			h = append(h, hint{"b", "pods"})
+		}
 		if !a.readOnly && a.configTarget.res.IsService() {
 			h = append(h, hint{"p", "port-forward"})
+		}
+		if a.configTarget.res.IsNodes() || a.configTarget.res.IsNamespaces() {
+			h = append(h, hint{"p", "pods"})
 		}
 		if !a.readOnly && a.configTarget.res.IsCronJob() {
 			h = append(h, hint{"t", "trigger"})
@@ -2658,11 +2854,20 @@ func (a App) hints() []hint {
 		return append(h, editModeHint, hint{"O", "docs"}, hint{"esc", "back"})
 	case screenDetail:
 		h := []hint{{"↑↓", "scroll"}, {"enter", "config"}}
+		if a.detailTarget.res.IsPod() {
+			h = append(h, hint{"l", "logs"})
+		}
 		if a.detailTarget.res.IsDeployment() {
 			h = append(h, hint{"L", "all logs"})
 		}
+		if a.detailTarget.res.IsService() {
+			h = append(h, hint{"b", "pods"})
+		}
 		if !a.readOnly && a.detailTarget.res.IsService() {
 			h = append(h, hint{"p", "port-forward"})
+		}
+		if a.detailTarget.res.IsNodes() || a.detailTarget.res.IsNamespaces() {
+			h = append(h, hint{"p", "pods"})
 		}
 		if !a.readOnly && a.detailTarget.res.IsCronJob() {
 			h = append(h, hint{"t", "trigger"})
@@ -2699,13 +2904,17 @@ func (a App) hints() []hint {
 	case a.res.IsDeployment():
 		h = append(h, hint{"L", "all logs"})
 	case a.res.IsService():
+		h = append(h, hint{"b", "pods"})
 		if writes {
 			h = append(h, hint{"p", "port-forward"})
 		}
 	case a.res.IsNodes():
+		h = append(h, hint{"p", "pods"})
 		if nodeOps {
 			h = append(h, hint{"s", "node shell"}, hint{"K", "cordon"}, hint{"D", "drain"})
 		}
+	case a.res.IsNamespaces():
+		h = append(h, hint{"p", "pods"})
 	case a.res.Scalable():
 		if writes {
 			h = append(h, hint{"s", "scale"})

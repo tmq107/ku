@@ -24,6 +24,7 @@ type keyMap struct {
 	Edit        key.Binding
 	Shell       key.Binding
 	PortForward key.Binding
+	Backends    key.Binding
 	Restart     key.Binding
 	Trigger     key.Binding
 	Delete      key.Binding
@@ -80,6 +81,7 @@ func defaultKeys() keyMap {
 		Edit:        key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit (nvim)")),
 		Shell:       key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "shell / scale")),
 		PortForward: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "port-forward")),
+		Backends:    key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "backends")),
 		Restart:     key.NewBinding(key.WithKeys("R"), key.WithHelp("R", "rollout restart")),
 		Trigger:     key.NewBinding(key.WithKeys("t"), key.WithHelp("t", "trigger job")),
 		Delete:      key.NewBinding(key.WithKeys("x", "delete"), key.WithHelp("x", "delete")),
@@ -124,7 +126,7 @@ type helpGroup struct {
 func (k keyMap) groups() []helpGroup {
 	return []helpGroup{
 		{"Navigation", []key.Binding{k.Up, k.Down, k.HalfUp, k.HalfDown, k.PageUp, k.PageDown, k.Top, k.Bottom, k.HScroll}},
-		{"Actions", []key.Binding{k.Enter, k.Describe, k.YAML, k.Logs, k.DeployLogs, k.Edit, k.Shell, k.PortForward, k.Restart, k.Trigger, k.Delete, k.Cordon, k.Drain, k.Docs}},
+		{"Actions", []key.Binding{k.Enter, k.Describe, k.YAML, k.Logs, k.DeployLogs, k.Edit, k.Shell, k.PortForward, k.Backends, k.Restart, k.Trigger, k.Delete, k.Cordon, k.Drain, k.Docs}},
 		{"Views", []key.Binding{k.Focus, k.Jump, k.Palette, k.EditMode, k.Filter, k.Sort, k.Refresh, k.Wide, k.Command}},
 		{"Cluster", []key.Binding{k.Namespace, k.AllNS, k.Context}},
 		{"Logs", []key.Binding{k.Follow, k.Filter, k.Wrap, k.Select, k.Mark, k.Copy, k.CopyAll, k.Clear}},

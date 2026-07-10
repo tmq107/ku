@@ -40,6 +40,22 @@ type PortForwardSpec struct {
 	ServicePort string
 }
 
+// ServiceBackends summarizes the pods selected by a Service.
+type ServiceBackends struct {
+	Selector string
+	Pods     []ServiceBackendPod
+	Ready    int
+	Running  int
+}
+
+// ServiceBackendPod is one pod behind a Service selector.
+type ServiceBackendPod struct {
+	Name  string
+	Ready bool
+	Phase string
+	PodIP string
+}
+
 // ServicePorts returns the ports exposed by a Service in spec order.
 func (c *Client) ServicePorts(ctx context.Context, namespace, name string) ([]ServicePort, error) {
 	svc, err := c.clientset.CoreV1().Services(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -141,6 +157,51 @@ func resolveServicePort(svc *corev1.Service, id string) (corev1.ServicePort, err
 }
 
 func (c *Client) servicePod(ctx context.Context, svc *corev1.Service) (*corev1.Pod, error) {
+	items, err := c.servicePods(ctx, svc)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		p := &items[i]
+		if p.DeletionTimestamp == nil && p.Status.Phase == corev1.PodRunning {
+			return p, nil
+		}
+	}
+	return nil, fmt.Errorf("service %q has no running pods", svc.Name)
+}
+
+// ServiceBackends returns the pods currently selected by a Service, ordered with
+// ready pods first.
+func (c *Client) ServiceBackends(ctx context.Context, namespace, name string) (*ServiceBackends, error) {
+	svc, err := c.clientset.CoreV1().Services(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	info := &ServiceBackends{}
+	if len(svc.Spec.Selector) == 0 {
+		return info, nil
+	}
+	info.Selector = labels.SelectorFromSet(labels.Set(svc.Spec.Selector)).String()
+	items, err := c.servicePods(ctx, svc)
+	if err != nil {
+		return nil, err
+	}
+	info.Pods = make([]ServiceBackendPod, 0, len(items))
+	for i := range items {
+		p := items[i]
+		ready := podReady(&p)
+		if ready {
+			info.Ready++
+		}
+		if p.Status.Phase == corev1.PodRunning {
+			info.Running++
+		}
+		info.Pods = append(info.Pods, ServiceBackendPod{Name: p.Name, Ready: ready, Phase: string(p.Status.Phase), PodIP: p.Status.PodIP})
+	}
+	return info, nil
+}
+
+func (c *Client) servicePods(ctx context.Context, svc *corev1.Service) ([]corev1.Pod, error) {
 	if len(svc.Spec.Selector) == 0 {
 		return nil, fmt.Errorf("service %q has no selector", svc.Name)
 	}
@@ -155,15 +216,12 @@ func (c *Client) servicePod(ctx context.Context, svc *corev1.Service) (*corev1.P
 		if ir != jr {
 			return ir
 		}
+		if items[i].Status.Phase != items[j].Status.Phase {
+			return items[i].Status.Phase == corev1.PodRunning
+		}
 		return items[i].Name < items[j].Name
 	})
-	for i := range items {
-		p := &items[i]
-		if p.DeletionTimestamp == nil && p.Status.Phase == corev1.PodRunning {
-			return p, nil
-		}
-	}
-	return nil, fmt.Errorf("service %q has no running pods", svc.Name)
+	return items, nil
 }
 
 func serviceTargetPortNumber(pod *corev1.Pod, svcPort corev1.ServicePort) (int32, error) {

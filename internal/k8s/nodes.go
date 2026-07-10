@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -37,6 +38,76 @@ func (c *Client) NodeCordoned(ctx context.Context, name string) (bool, error) {
 		return false, err
 	}
 	return n.Spec.Unschedulable, nil
+}
+
+// NodePods summarizes pods currently scheduled onto a node.
+type NodePods struct {
+	Pods    []NodePod
+	Ready   int
+	Running int
+}
+
+// NodePod is one pod scheduled on a node.
+type NodePod struct {
+	Namespace string
+	Name      string
+	Ready     bool
+	Phase     string
+}
+
+// NodePods lists pods running on a node, ordered with running/ready pods first.
+func (c *Client) NodePods(ctx context.Context, name string) (*NodePods, error) {
+	list, err := c.clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{FieldSelector: "spec.nodeName=" + name})
+	if err != nil {
+		return nil, err
+	}
+	items := make([]corev1.Pod, 0, len(list.Items))
+	for i := range list.Items {
+		if list.Items[i].Spec.NodeName == name {
+			items = append(items, list.Items[i])
+		}
+	}
+	return summarizePods(items), nil
+}
+
+// NamespacePods lists pods inside a namespace, ordered with running/ready pods first.
+func (c *Client) NamespacePods(ctx context.Context, namespace string) (*NodePods, error) {
+	list, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	items := append([]corev1.Pod(nil), list.Items...)
+	return summarizePods(items), nil
+}
+
+func summarizePods(items []corev1.Pod) *NodePods {
+	sort.Slice(items, func(i, j int) bool {
+		ir, jr := items[i].Status.Phase == corev1.PodRunning, items[j].Status.Phase == corev1.PodRunning
+		if ir != jr {
+			return ir
+		}
+		ir, jr = podReady(&items[i]), podReady(&items[j])
+		if ir != jr {
+			return ir
+		}
+		if items[i].Namespace != items[j].Namespace {
+			return items[i].Namespace < items[j].Namespace
+		}
+		return items[i].Name < items[j].Name
+	})
+	out := &NodePods{Pods: make([]NodePod, 0, len(items))}
+	for i := range items {
+		p := &items[i]
+		ready := podReady(p)
+		if ready {
+			out.Ready++
+		}
+		if p.Status.Phase == corev1.PodRunning {
+			out.Running++
+		}
+		out.Pods = append(out.Pods, NodePod{Namespace: p.Namespace, Name: p.Name, Ready: ready, Phase: string(p.Status.Phase)})
+	}
+	return out
 }
 
 // DrainResult summarizes a drain: how many pods were evicted, which were left in

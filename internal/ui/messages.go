@@ -55,6 +55,8 @@ type configLoadedMsg struct {
 	title    string
 	obj      map[string]interface{}
 	usage    *k8s.PodUsage
+	service  *k8s.ServiceBackends
+	nodePods *k8s.NodePods
 	err      error
 }
 
@@ -250,16 +252,28 @@ func loadConfigCmd(cl *k8s.Client, seq int, res k8s.ResourceInfo, ns, name strin
 		defer cancel()
 		obj, err := cl.GetObject(ctx, res, ns, name)
 		var usage *k8s.PodUsage
+		var service *k8s.ServiceBackends
+		var nodePods *k8s.NodePods
 		if err == nil && res.IsPod() && ns != "" {
 			if u, uerr := cl.PodUsage(ctx, ns, name); uerr == nil {
 				usage = &u
+			}
+		}
+		if err == nil && res.IsService() && ns != "" {
+			if s, serr := cl.ServiceBackends(ctx, ns, name); serr == nil {
+				service = s
+			}
+		}
+		if err == nil && res.IsNodes() {
+			if n, nerr := cl.NodePods(ctx, name); nerr == nil {
+				nodePods = n
 			}
 		}
 		title := res.Resource + "/" + name
 		if ns != "" {
 			title = ns + "/" + name
 		}
-		return configLoadedMsg{client: cl, seq: seq, res: res, ns: ns, name: name, title: title, obj: obj, usage: usage, err: err}
+		return configLoadedMsg{client: cl, seq: seq, res: res, ns: ns, name: name, title: title, obj: obj, usage: usage, service: service, nodePods: nodePods, err: err}
 	}
 }
 

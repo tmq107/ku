@@ -24,10 +24,12 @@ type configView struct {
 	label string
 
 	// Source kept so the width-sensitive summary can be re-laid-out on resize.
-	res    k8s.ResourceInfo
-	obj    map[string]interface{}
-	usage  *k8s.PodUsage
-	hasObj bool
+	res      k8s.ResourceInfo
+	obj      map[string]interface{}
+	usage    *k8s.PodUsage
+	service  *k8s.ServiceBackends
+	nodePods *k8s.NodePods
+	hasObj   bool
 }
 
 func newConfigView(th Theme) configView {
@@ -41,7 +43,7 @@ func (c *configView) setSize(w, h int) {
 	y, x := c.vp.YOffset(), c.vp.XOffset()
 	c.pager.setSize(w, h)
 	if c.hasObj {
-		c.SetContent(renderConfig(c.th, c.res, c.obj, c.vp.Width(), c.usage))
+		c.SetContent(renderConfig(c.th, c.res, c.obj, c.vp.Width(), c.usage, c.service, c.nodePods))
 		c.vp.SetYOffset(y)
 		c.vp.SetXOffset(x)
 	}
@@ -55,12 +57,12 @@ func (c *configView) setMessage(title, body string) {
 	c.SetContent(body)
 }
 
-func (c *configView) setObject(res k8s.ResourceInfo, title string, obj map[string]interface{}, usage *k8s.PodUsage) {
+func (c *configView) setObject(res k8s.ResourceInfo, title string, obj map[string]interface{}, usage *k8s.PodUsage, service *k8s.ServiceBackends, nodePods *k8s.NodePods) {
 	c.title = title
 	c.label = strings.ToLower(res.Kind) + " config"
-	c.res, c.obj, c.usage, c.hasObj = res, obj, usage, true
+	c.res, c.obj, c.usage, c.service, c.nodePods, c.hasObj = res, obj, usage, service, nodePods, true
 	c.clearFilter()
-	c.SetContent(renderConfig(c.th, res, obj, c.vp.Width(), usage))
+	c.SetContent(renderConfig(c.th, res, obj, c.vp.Width(), usage, service, nodePods))
 }
 
 func (c configView) View() string {
@@ -73,7 +75,7 @@ func (c configView) View() string {
 
 type configRow struct{ key, value string }
 
-func renderConfig(th Theme, res k8s.ResourceInfo, obj map[string]interface{}, width int, usage *k8s.PodUsage) string {
+func renderConfig(th Theme, res k8s.ResourceInfo, obj map[string]interface{}, width int, usage *k8s.PodUsage, service *k8s.ServiceBackends, nodePods *k8s.NodePods) string {
 	var lines []string
 	add := func(title string, rows []configRow) {
 		if len(rows) == 0 {
@@ -117,13 +119,17 @@ func renderConfig(th Theme, res k8s.ResourceInfo, obj map[string]interface{}, wi
 		add("ConfigMap", configMapSummaryRows(obj))
 		add("Data", configMapDataRows(obj, width))
 		add("Binary Data", dataKeyRows(obj, []string{"binaryData"}, "encoded"))
+	case "nodes":
+		addOverview()
+		add("Node", nodeRows(obj))
+		add("Pods", nodePodRows(nodePods))
 	case "secrets":
 		addOverview()
 		add("Secret", secretRows(obj))
 		add("Decoded Data", secretDataRows(th, obj, width))
 	case "services":
 		addOverview()
-		add("Service", serviceRows(obj))
+		add("Service", serviceRows(obj, service))
 	case "ingresses":
 		addOverview()
 		add("Ingress", ingressRows(obj))
@@ -141,7 +147,9 @@ func configKV(th Theme, key, value string, width int) string {
 	if strings.TrimSpace(value) == "" {
 		value = th.Dim.Render("-")
 	}
-	valueW := ansi.StringWidth(value)
+	lines := strings.Split(strings.ReplaceAll(value, "\r\n", "\n"), "\n")
+	first := lines[0]
+	valueW := ansi.StringWidth(first)
 	keyW := configKeyWidth
 	if width > 0 {
 		maxKeyW := width - valueW - 4 // indent + two-space separator
@@ -153,8 +161,17 @@ func configKV(th Theme, key, value string, width int) string {
 		}
 	}
 	key = truncate(key, keyW)
-	line := th.HeaderKey.Render(fmt.Sprintf("  %-*s", keyW, key)) + "  " + value
-	return ansi.Truncate(line, width, "")
+	prefix := th.HeaderKey.Render(fmt.Sprintf("  %-*s", keyW, key)) + "  "
+	if len(lines) == 1 {
+		return ansi.Truncate(prefix+first, width, "")
+	}
+	contPrefix := strings.Repeat(" ", 2+keyW+2)
+	out := make([]string, 0, len(lines))
+	out = append(out, ansi.Truncate(prefix+first, width, ""))
+	for _, line := range lines[1:] {
+		out = append(out, ansi.Truncate(contPrefix+line, width, ""))
+	}
+	return strings.Join(out, "\n")
 }
 
 func overviewRows(res k8s.ResourceInfo, obj map[string]interface{}) []configRow {
@@ -257,7 +274,6 @@ func podUsageRows(th Theme, obj map[string]interface{}, usage *k8s.PodUsage) []c
 func podHealthRows(th Theme, obj map[string]interface{}) []configRow {
 	rows := []configRow{
 		{"phase", scalarOrDash(obj, "status", "phase")},
-		{"ready", podConditionSummary(obj, "Ready")},
 		{"restarts", fmt.Sprintf("%d", podRestartCount(obj))},
 	}
 	issues := podIssues(obj)
@@ -513,6 +529,10 @@ func configMapDataRows(obj map[string]interface{}, width int) []configRow {
 	}
 	for _, k := range keys {
 		s, _ := data[k].(string)
+		if strings.Contains(s, "\n") {
+			rows = append(rows, configRow{k, byteSize(len(s)) + "\n" + strings.TrimRight(s, "\n")})
+			continue
+		}
 		preview := firstLine(s)
 		if preview != "" {
 			preview = " · " + ansi.Truncate(preview, previewW, "…")
@@ -562,7 +582,30 @@ func secretDataRows(th Theme, obj map[string]interface{}, width int) []configRow
 	return rows
 }
 
-func serviceRows(obj map[string]interface{}) []configRow {
+func nodeRows(obj map[string]interface{}) []configRow {
+	rows := []configRow{{"schedulable", scalarOrDash(obj, "spec", "unschedulable")}}
+	if labels, ok := mapAt(obj, "metadata", "labels"); ok {
+		if zone := compactValue(labels["topology.kubernetes.io/zone"]); zone != "-" {
+			rows = append(rows, configRow{"zone", zone})
+		}
+		if inst := compactValue(labels["node.kubernetes.io/instance-type"]); inst != "-" {
+			rows = append(rows, configRow{"instance", inst})
+		}
+	}
+	return rows
+}
+
+func nodePodRows(info *k8s.NodePods) []configRow {
+	if info == nil {
+		return nil
+	}
+	if len(info.Pods) == 0 {
+		return []configRow{{"status", "0 ready · 0 running · 0 scheduled"}, {"pods", "no pods scheduled"}}
+	}
+	return []configRow{{"status", fmt.Sprintf("%d ready · %d running · %d scheduled", info.Ready, info.Running, len(info.Pods))}}
+}
+
+func serviceRows(obj map[string]interface{}, info *k8s.ServiceBackends) []configRow {
 	rows := []configRow{
 		{"type", scalarOrDash(obj, "spec", "type")},
 		{"cluster ip", scalarOrDash(obj, "spec", "clusterIP")},
@@ -572,7 +615,47 @@ func serviceRows(obj map[string]interface{}) []configRow {
 	if ips, ok := sliceAt(obj, "spec", "externalIPs"); ok {
 		rows = append(rows, configRow{"external ips", joinScalars(ips, 4)})
 	}
+	if info != nil {
+		rows = append(rows, serviceBackendRows(info)...)
+	}
 	return rows
+}
+
+func serviceBackendRows(info *k8s.ServiceBackends) []configRow {
+	if info == nil {
+		return nil
+	}
+	if info.Selector == "" {
+		return []configRow{{"backends", "service has no selector"}}
+	}
+	rows := []configRow{{"backend status", fmt.Sprintf("%d ready · %d running · %d selected", info.Ready, info.Running, len(info.Pods))}}
+	if len(info.Pods) == 0 {
+		rows = append(rows, configRow{"backends", "no matching pods"})
+		return rows
+	}
+	rows = append(rows, configRow{"backends", joinWithMore(serviceBackendNames(info.Pods), 4)})
+	for i, pod := range info.Pods {
+		state := pod.Phase
+		if state == "" {
+			state = "Unknown"
+		}
+		if pod.Ready {
+			state = state + " · Ready"
+		}
+		if pod.PodIP != "" {
+			state = state + " · " + pod.PodIP
+		}
+		rows = append(rows, configRow{fmt.Sprintf("pod %d", i+1), pod.Name + " · " + state})
+	}
+	return rows
+}
+
+func serviceBackendNames(pods []k8s.ServiceBackendPod) []string {
+	names := make([]string, 0, len(pods))
+	for _, pod := range pods {
+		names = append(names, pod.Name)
+	}
+	return names
 }
 
 func ingressRows(obj map[string]interface{}) []configRow {

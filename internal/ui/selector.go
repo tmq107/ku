@@ -21,6 +21,7 @@ const (
 	selSort
 	selTheme
 	selServicePort
+	selServiceBackend
 	selPortForward
 )
 
