@@ -67,12 +67,7 @@ func TestTableFilterKeepsJKAsText(t *testing.T) {
 }
 
 func TestPagerFilterArrowConfirms(t *testing.T) {
-	app := App{client: nil, theme: PickTheme("ansi"), keys: defaultKeys(), width: 80, height: 24, screen: screenLogs}
-	app.logs = newLogView(app.theme)
-	app.logs.setSize(70, 20)
-	for i := 0; i < 40; i++ {
-		app.logs.appendLine("log line " + itoa(i))
-	}
+	app := logsTestApp(t, 40)
 
 	m, _ := app.updateLogs(mkKey("/"))
 	app = m.(App)

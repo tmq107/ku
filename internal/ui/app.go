@@ -748,21 +748,19 @@ func (a App) updateCockpit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (a App) updateTable(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Filtering captures all typing until it ends.
 	if a.table.filtering {
-		switch {
+		switch s := msg.String(); {
 		case key.Matches(msg, a.keys.Back):
 			a.table.stopFilter(true)
 			return a, nil
-		case msg.String() == "enter":
+		case s == "enter":
 			a.table.stopFilter(false)
 			return a, nil
-		case msg.String() == "up", msg.String() == "down":
-			// Arrow keys confirm the filter and move in one press. Only the
-			// bare arrows: k/j must stay typeable as filter text.
-			a.table.stopFilter(false)
-			var cmd tea.Cmd
-			a.table, cmd = a.table.Update(msg)
-			return a, cmd
 		default:
+			// Bare up/down confirm the filter and move in one press. Only the
+			// bare arrows: k/j must stay typeable as filter text.
+			if s == "up" || s == "down" {
+				a.table.stopFilter(false)
+			}
 			var cmd tea.Cmd
 			a.table, cmd = a.table.Update(msg)
 			return a, cmd
@@ -950,17 +948,17 @@ func (a *App) handlePagerKeys(p *pager, msg tea.KeyMsg) (tea.Cmd, bool) {
 	}
 	// Filtering captures all typing until it ends.
 	if p.filtering {
-		switch {
+		switch s := msg.String(); {
 		case key.Matches(msg, a.keys.Back):
 			p.stopFilter(true)
-		case msg.String() == "enter":
+		case s == "enter":
 			p.stopFilter(false)
-		case msg.String() == "up", msg.String() == "down":
-			// Arrow keys confirm the filter and scroll in one press. Only the
-			// bare arrows: k/j must stay typeable as filter text.
-			p.stopFilter(false)
-			return p.update(msg), true
 		default:
+			// Bare up/down confirm the filter and scroll in one press. Only the
+			// bare arrows: k/j must stay typeable as filter text.
+			if s == "up" || s == "down" {
+				p.stopFilter(false)
+			}
 			return p.update(msg), true
 		}
 		return nil, true
