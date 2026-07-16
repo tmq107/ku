@@ -212,15 +212,24 @@ func cell(cells []string, i int) string {
 	return cells[i]
 }
 
+// visibleText joins a row's visible cells for filter matching.
+func (v *tableView) visibleText(r k8s.Row) string {
+	parts := make([]string, len(v.vis))
+	for n, i := range v.vis {
+		parts[n] = cell(r.Cells, i)
+	}
+	return strings.Join(parts, " ")
+}
+
 // rebuild recomputes the filtered+sorted rows and fitted widths, keeping the
 // cursor in range and visible.
 func (v *tableView) rebuild() {
 	v.vis = v.visibleCols()
 
-	// Filter (an empty filter keeps all rows in their original order).
-	v.rows = fuzzyRank(v.allRows, v.filter.Value(), func(r k8s.Row) string {
-		return strings.Join(r.Cells, " ")
-	})
+	// Filter (an empty filter keeps all rows in their original order). Match
+	// only the visible cells: text in hidden wide columns would keep rows for
+	// reasons the user cannot see.
+	v.rows = fuzzyRank(v.allRows, v.filter.Value(), v.visibleText)
 
 	// Optional explicit column sort, layered on top of the filter.
 	if v.sortCol >= 0 && v.sortCol < len(v.cols) {

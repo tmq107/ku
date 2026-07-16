@@ -157,6 +157,29 @@ func TestTableScrollLeftStopsAtEdgeAndHints(t *testing.T) {
 	}
 }
 
+func TestTableFilterIgnoresHiddenColumns(t *testing.T) {
+	v := newTableView(PickTheme("ansi"))
+	v.setData(fakeTable())
+	v.setSize(80, 20)
+
+	// The IP column is wide (hidden by default). A query that only matches a
+	// hidden cell must not keep the row.
+	v.filter.SetValue("10.0.0.2")
+	v.rebuild()
+	if got := v.count(); got != 0 {
+		t.Fatalf("hidden-column match kept %d rows, want 0", got)
+	}
+
+	// With wide columns shown the same query matches its row.
+	v.toggleWide()
+	if got := v.count(); got != 1 {
+		t.Fatalf("wide-column match kept %d rows, want 1", got)
+	}
+	if r, ok := v.selected(); !ok || r.Name != "coredns-abc" {
+		t.Fatalf("selected row = %+v, want coredns-abc", r)
+	}
+}
+
 func TestTableScrollNoopWithoutOverflow(t *testing.T) {
 	v := newTableView(PickTheme("ansi"))
 	v.setData(scrollTable())
