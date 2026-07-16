@@ -224,9 +224,8 @@ func (v *tableView) rebuild() {
 
 	// Optional explicit column sort, layered on top of the filter.
 	if v.sortCol >= 0 && v.sortCol < len(v.cols) {
-		name := v.cols[v.sortCol].Name
 		less := func(i, j int) bool {
-			return cellLess(name, cell(v.rows[i].Cells, v.sortCol), cell(v.rows[j].Cells, v.sortCol))
+			return cellLess(cell(v.rows[i].Cells, v.sortCol), cell(v.rows[j].Cells, v.sortCol))
 		}
 		if v.sortDesc {
 			sort.SliceStable(v.rows, func(i, j int) bool { return less(j, i) })

@@ -5,13 +5,14 @@ import (
 	"strings"
 )
 
-// cellLess orders two table cells from the named column. Numeric-looking values
-// (CPU "245m", MEM "1234Mi", percentages, restart counts, ready ratios) compare
-// numerically, ages compare by duration, and everything else compares
-// case-insensitively. Unparseable/empty cells sort after numeric ones.
-func cellLess(col, a, b string) bool {
-	av, aok := sortVal(col, a)
-	bv, bok := sortVal(col, b)
+// cellLess orders two table cells. Duration-shaped values ("2m59s", "5d")
+// compare by elapsed time, numeric-looking values (CPU "245m", MEM "1234Mi",
+// percentages, restart counts, ready ratios) compare numerically, and
+// everything else compares case-insensitively. Unparseable/empty cells sort
+// after numeric ones.
+func cellLess(a, b string) bool {
+	av, aok := sortVal(a)
+	bv, bok := sortVal(b)
 	if aok && bok {
 		if av != bv {
 			return av < bv
@@ -24,13 +25,15 @@ func cellLess(col, a, b string) bool {
 	return strings.ToLower(a) < strings.ToLower(b)
 }
 
-func sortVal(col, s string) (float64, bool) {
+func sortVal(s string) (float64, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" || s == "-" || s == "<none>" {
 		return 0, false
 	}
-	if strings.EqualFold(col, "age") {
-		return parseAge(s)
+	// Duration cells appear under many column names (AGE, LAST SEEN, DURATION,
+	// LAST SCHEDULE), so the value's shape decides, not the column name.
+	if v, ok := parseAge(s); ok {
+		return v, true
 	}
 	// CPU/MEM/percent/restarts/ready all lead with their number, so the leading
 	// numeric prefix is a stable comparison key for them.
