@@ -57,6 +57,7 @@ type configLoadedMsg struct {
 	usage    *k8s.PodUsage
 	service  *k8s.ServiceBackends
 	nodePods *k8s.NodePods
+	events   []k8s.EventLine
 	err      error
 }
 
@@ -269,11 +270,17 @@ func loadConfigCmd(cl *k8s.Client, seq int, res k8s.ResourceInfo, ns, name strin
 				nodePods = n
 			}
 		}
+		var events []k8s.EventLine
+		if err == nil && res.IsPod() && ns != "" {
+			if ev, eerr := cl.PodEvents(ctx, ns, name); eerr == nil {
+				events = ev
+			}
+		}
 		title := res.Resource + "/" + name
 		if ns != "" {
 			title = ns + "/" + name
 		}
-		return configLoadedMsg{client: cl, seq: seq, res: res, ns: ns, name: name, title: title, obj: obj, usage: usage, service: service, nodePods: nodePods, err: err}
+		return configLoadedMsg{client: cl, seq: seq, res: res, ns: ns, name: name, title: title, obj: obj, usage: usage, service: service, nodePods: nodePods, events: events, err: err}
 	}
 }
 

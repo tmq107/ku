@@ -27,6 +27,8 @@ can run any of these and jump to any resource.
 | `p` | port-forward a Service |
 | `R` | rollout restart (deployments, statefulsets, daemonsets) |
 | `t` | trigger a CronJob once (with confirm) |
+| `J` | show Jobs owned by a CronJob |
+| `p` | show Pods for a Job (or port-forward a Service, or show node/namespace pods) |
 | `K` | cordon / uncordon a node (with confirm) |
 | `D` | drain a node: cordon and evict its pods (with confirm) |
 | `x` / `Delete` | delete (with confirm) |
@@ -34,7 +36,7 @@ can run any of these and jump to any resource.
 
 The bottom bar adapts to the selected resource: pods show logs and shell,
 Services show port-forward, nodes show node shell, cordon, and drain, workloads
-show scale and restart, and CronJobs show trigger.
+show scale and restart, CronJobs show jobs and trigger, and Jobs show pods.
 
 Draining cordons the node, then evicts its pods through the eviction API so
 PodDisruptionBudgets are honored. DaemonSet and static (mirror) pods are left in
@@ -69,8 +71,8 @@ until edit mode is enabled with `Shift+E` or the command palette.
 | --- | --- |
 | Logs | `f` follow, `/` filter (regex, `Enter` or `↑`/`↓` confirms), `w` (or `Ctrl+w` while filtering) wrap / truncate lines, `c` copy all, `Ctrl+l` clear, `v` select lines, `g` / `G` top / bottom, `esc` back |
 | Logs (selecting) | `↑` / `↓` (and `g` / `G`, page keys) move the cursor, `m` mark, `y` / `Enter` copy, `esc` cancel |
-| Config summary | scroll, `d` / `y` YAML, `e` edit, `t` trigger CronJob, `esc` back |
-| Detail (YAML) | scroll, `Enter` config, `e` edit, `t` trigger CronJob, `esc` back |
+| Config summary | scroll, `d` / `y` YAML, `e` edit, `J` cronjob jobs, `p` job pods, `t` trigger CronJob, `esc` back |
+| Detail (YAML) | scroll, `Enter` config, `e` edit, `J` cronjob jobs, `p` job pods, `t` trigger CronJob, `esc` back |
 | Shell / editor | keys go to the program; `Ctrl+Shift+V` pastes in shell mode; `Ctrl+V` is passed through; `Ctrl+\` detaches (cancels an edit) |
 | Command overlay | `C`, `q`, or `esc` closes |
 | Pickers / palette | move, type to filter, `Enter` select, `esc` cancel |

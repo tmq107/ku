@@ -50,8 +50,9 @@ cockpit, YAML detail, config summary, or logs.
 ## Config summary and YAML
 
 `Enter` opens a curated config summary for the selected object. Pods show live
-usage when metrics are available, health, requests and limits, and pod spec
-details. Workloads, Jobs, and CronJobs show status before overview fields.
+usage when metrics are available, health, requests and limits, pod spec
+details, and recent events (sorted chronologically, warnings highlighted).
+Workloads, Jobs, and CronJobs show status before overview fields.
 Services, Ingresses, ConfigMaps, and Secrets get purpose-built summaries;
 unknown kinds fall back to an overview plus spec summary.
 
@@ -131,7 +132,8 @@ be blocked on clusters with restrictive Pod Security settings.
 `s` on a workload (deployment, statefulset, replicaset) prompts for a replica
 count. `R` triggers a rolling restart of a deployment, statefulset, or daemonset
 (the same restartedAt-annotation mechanism kubectl uses), after a confirm. `t`
-on a CronJob creates a one-off Job from its job template, after a confirm. `x`
+on a CronJob creates a one-off Job from its job template, after a confirm. `J`
+on a CronJob lists its Jobs, and `p` on a Job lists its Pods. `x`
 deletes the selected object after a confirm.
 
 The bottom bar is context-aware: it shows logs and shell for pods, port-forward

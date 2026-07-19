@@ -22,6 +22,7 @@ const (
 	selTheme
 	selServicePort
 	selServiceBackend
+	selCronJobJob
 	selPortForward
 )
 

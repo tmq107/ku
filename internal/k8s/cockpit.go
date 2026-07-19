@@ -16,6 +16,7 @@ import (
 // the same (namespace, object, reason) recurred.
 type EventLine struct {
 	Age       string
+	Type      string // "Normal" or "Warning"
 	Namespace string
 	Reason    string
 	Object    string
@@ -239,6 +240,7 @@ func (c *Client) recentWarnings(ctx context.Context) []EventLine {
 		seen[key] = len(out)
 		out = append(out, EventLine{
 			Age:       ageString(eventTime(e)),
+			Type:      e.Type,
 			Namespace: e.Namespace,
 			Reason:    e.Reason,
 			Object:    obj,

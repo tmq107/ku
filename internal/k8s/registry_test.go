@@ -70,3 +70,17 @@ func TestResolveDoesNotFallbackForQualifiedResource(t *testing.T) {
 		t.Fatal("Resolve(pods.badgroup) fell back to core pods")
 	}
 }
+
+func TestResourceInfoIsJob(t *testing.T) {
+	r := ResourceInfo{Group: "batch", Resource: "jobs"}
+	if !r.IsJob() {
+		t.Fatal("IsJob() = false for batch/jobs")
+	}
+	if r.IsCronJob() {
+		t.Fatal("IsCronJob() = true for batch/jobs")
+	}
+	r2 := ResourceInfo{Group: "batch", Resource: "cronjobs"}
+	if r2.IsJob() {
+		t.Fatal("IsJob() = true for batch/cronjobs")
+	}
+}

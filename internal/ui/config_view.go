@@ -29,6 +29,7 @@ type configView struct {
 	usage    *k8s.PodUsage
 	service  *k8s.ServiceBackends
 	nodePods *k8s.NodePods
+	events   []k8s.EventLine
 	hasObj   bool
 }
 
@@ -43,7 +44,7 @@ func (c *configView) setSize(w, h int) {
 	y, x := c.vp.YOffset(), c.vp.XOffset()
 	c.pager.setSize(w, h)
 	if c.hasObj {
-		c.SetContent(renderConfig(c.th, c.res, c.obj, c.vp.Width(), c.usage, c.service, c.nodePods))
+		c.SetContent(renderConfig(c.th, c.res, c.obj, c.vp.Width(), c.usage, c.service, c.nodePods, c.events))
 		c.vp.SetYOffset(y)
 		c.vp.SetXOffset(x)
 	}
@@ -57,12 +58,12 @@ func (c *configView) setMessage(title, body string) {
 	c.SetContent(body)
 }
 
-func (c *configView) setObject(res k8s.ResourceInfo, title string, obj map[string]interface{}, usage *k8s.PodUsage, service *k8s.ServiceBackends, nodePods *k8s.NodePods) {
+func (c *configView) setObject(res k8s.ResourceInfo, title string, obj map[string]interface{}, usage *k8s.PodUsage, service *k8s.ServiceBackends, nodePods *k8s.NodePods, events []k8s.EventLine) {
 	c.title = title
 	c.label = strings.ToLower(res.Kind) + " config"
-	c.res, c.obj, c.usage, c.service, c.nodePods, c.hasObj = res, obj, usage, service, nodePods, true
+	c.res, c.obj, c.usage, c.service, c.nodePods, c.events, c.hasObj = res, obj, usage, service, nodePods, events, true
 	c.clearFilter()
-	c.SetContent(renderConfig(c.th, res, obj, c.vp.Width(), usage, service, nodePods))
+	c.SetContent(renderConfig(c.th, res, obj, c.vp.Width(), usage, service, nodePods, events))
 }
 
 func (c configView) View() string {
@@ -75,7 +76,7 @@ func (c configView) View() string {
 
 type configRow struct{ key, value string }
 
-func renderConfig(th Theme, res k8s.ResourceInfo, obj map[string]interface{}, width int, usage *k8s.PodUsage, service *k8s.ServiceBackends, nodePods *k8s.NodePods) string {
+func renderConfig(th Theme, res k8s.ResourceInfo, obj map[string]interface{}, width int, usage *k8s.PodUsage, service *k8s.ServiceBackends, nodePods *k8s.NodePods, events []k8s.EventLine) string {
 	var lines []string
 	add := func(title string, rows []configRow) {
 		if len(rows) == 0 {
@@ -114,6 +115,7 @@ func renderConfig(th Theme, res k8s.ResourceInfo, obj map[string]interface{}, wi
 		addOverview()
 		add("Pod", podRows(obj))
 		addPodSpecSections(th, obj, []string{"spec"}, add)
+		add("Events", podEventRows(th, events))
 	case "configmaps":
 		addOverview()
 		add("ConfigMap", configMapSummaryRows(obj))
@@ -293,6 +295,25 @@ func podRows(obj map[string]interface{}) []configRow {
 	}
 	if v, ok := scalarAt(obj, "status", "podIP"); ok {
 		rows = append(rows, configRow{"pod ip", v})
+	}
+	return rows
+}
+
+func podEventRows(th Theme, events []k8s.EventLine) []configRow {
+	if len(events) == 0 {
+		return nil
+	}
+	rows := make([]configRow, 0, len(events))
+	for _, e := range events {
+		label := e.Age + " " + e.Reason
+		value := e.Message
+		if e.Count > 1 {
+			value += fmt.Sprintf(" (x%d)", e.Count)
+		}
+		if e.Type == "Warning" {
+			value = th.Warn.Render(value)
+		}
+		rows = append(rows, configRow{label, value})
 	}
 	return rows
 }

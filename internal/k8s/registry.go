@@ -82,6 +82,11 @@ func (r ResourceInfo) IsCronJob() bool {
 	return r.Group == "batch" && r.Resource == "cronjobs"
 }
 
+// IsJob reports whether this is a batch Job list.
+func (r ResourceInfo) IsJob() bool {
+	return r.Group == "batch" && r.Resource == "jobs"
+}
+
 // IsNodes reports whether this is the core Node list.
 func (r ResourceInfo) IsNodes() bool {
 	return r.Group == "" && r.Resource == "nodes"
