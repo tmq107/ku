@@ -11,6 +11,73 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 )
 
+func TestPodContainersMarksPreviousInstances(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default"},
+		Spec: corev1.PodSpec{
+			InitContainers: []corev1.Container{{Name: "init"}},
+			Containers:     []corev1.Container{{Name: "app"}, {Name: "sidecar"}},
+		},
+		Status: corev1.PodStatus{
+			InitContainerStatuses: []corev1.ContainerStatus{{
+				Name:                 "init",
+				RestartCount:         1,
+				LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
+			}},
+			ContainerStatuses: []corev1.ContainerStatus{
+				{
+					Name:                 "app",
+					RestartCount:         2,
+					LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1}},
+				},
+				{
+					Name:                 "sidecar",
+					RestartCount:         1,
+					LastTerminationState: corev1.ContainerState{},
+				},
+			},
+		},
+	}
+	c := &Client{clientset: fake.NewSimpleClientset(pod)}
+
+	got, err := c.PodContainers(context.Background(), "default", "api")
+	if err != nil {
+		t.Fatalf("PodContainers() error = %v", err)
+	}
+	want := []PodContainer{
+		{Name: "init", PreviousAvailable: true},
+		{Name: "app", PreviousAvailable: true},
+		{Name: "sidecar", PreviousAvailable: false},
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("PodContainers() = %#v, want %#v", got, want)
+	}
+}
+
+func TestPodLogOptionsModes(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     LogMode
+		follow   bool
+		previous bool
+	}{
+		{name: "current follows", mode: LogCurrent, follow: true},
+		{name: "previous is finite", mode: LogPrevious, previous: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := podLogOptions("app", 1000, tt.mode)
+			if opts.Container != "app" || opts.Follow != tt.follow || opts.Previous != tt.previous {
+				t.Fatalf("podLogOptions() = %#v", opts)
+			}
+			if opts.TailLines == nil || *opts.TailLines != 1000 {
+				t.Fatalf("podLogOptions() tail = %v, want 1000", opts.TailLines)
+			}
+		})
+	}
+}
+
 func TestDeploymentLogTargets(t *testing.T) {
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default"},

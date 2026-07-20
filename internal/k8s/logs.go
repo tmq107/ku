@@ -17,14 +17,28 @@ type LogTarget struct {
 	Container string
 }
 
-// PodContainers returns the container names of a pod (init containers first,
-// then regular containers), used to pick which log stream to follow.
-func (c *Client) PodContainers(ctx context.Context, namespace, pod string) ([]string, error) {
+// LogMode selects the current live container or its finite previous instance.
+type LogMode int
+
+const (
+	LogCurrent LogMode = iota
+	LogPrevious
+)
+
+// PodContainer describes one container available for logs or exec.
+type PodContainer struct {
+	Name              string
+	PreviousAvailable bool
+}
+
+// PodContainers returns the containers of a pod (init containers first, then
+// regular containers) and whether each has a previous terminated instance.
+func (c *Client) PodContainers(ctx context.Context, namespace, pod string) ([]PodContainer, error) {
 	p, err := c.clientset.CoreV1().Pods(namespace).Get(ctx, pod, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
-	return podContainerNames(p), nil
+	return podContainers(p), nil
 }
 
 // DeploymentLogTargets returns every pod/container selected by a Deployment.
@@ -61,25 +75,55 @@ func (c *Client) DeploymentLogTargets(ctx context.Context, namespace, name strin
 }
 
 func podContainerNames(p *corev1.Pod) []string {
-	names := make([]string, 0, len(p.Spec.InitContainers)+len(p.Spec.Containers))
-	for i := range p.Spec.InitContainers {
-		names = append(names, p.Spec.InitContainers[i].Name)
-	}
-	for i := range p.Spec.Containers {
-		names = append(names, p.Spec.Containers[i].Name)
+	containers := podContainers(p)
+	names := make([]string, len(containers))
+	for i := range containers {
+		names[i] = containers[i].Name
 	}
 	return names
 }
 
-// LogStream opens a log stream for a pod container. When follow is true the
-// caller must close the returned reader (and/or cancel ctx) to stop it.
-func (c *Client) LogStream(ctx context.Context, namespace, pod, container string, tail int64, follow bool) (io.ReadCloser, error) {
+func podContainers(p *corev1.Pod) []PodContainer {
+	previous := make(map[string]bool, len(p.Status.InitContainerStatuses)+len(p.Status.ContainerStatuses))
+	for _, status := range p.Status.InitContainerStatuses {
+		previous[status.Name] = hasPreviousInstance(status)
+	}
+	for _, status := range p.Status.ContainerStatuses {
+		previous[status.Name] = hasPreviousInstance(status)
+	}
+
+	containers := make([]PodContainer, 0, len(p.Spec.InitContainers)+len(p.Spec.Containers))
+	for i := range p.Spec.InitContainers {
+		name := p.Spec.InitContainers[i].Name
+		containers = append(containers, PodContainer{Name: name, PreviousAvailable: previous[name]})
+	}
+	for i := range p.Spec.Containers {
+		name := p.Spec.Containers[i].Name
+		containers = append(containers, PodContainer{Name: name, PreviousAvailable: previous[name]})
+	}
+	return containers
+}
+
+func hasPreviousInstance(status corev1.ContainerStatus) bool {
+	return status.RestartCount > 0 && status.LastTerminationState.Terminated != nil
+}
+
+// LogStream opens logs for the selected container instance. Current logs follow
+// until the caller closes the reader or cancels ctx; previous logs are finite.
+func (c *Client) LogStream(ctx context.Context, namespace, pod, container string, tail int64, mode LogMode) (io.ReadCloser, error) {
+	opts := podLogOptions(container, tail, mode)
+	return c.clientset.CoreV1().Pods(namespace).GetLogs(pod, opts).Stream(ctx)
+}
+
+func podLogOptions(container string, tail int64, mode LogMode) *corev1.PodLogOptions {
+	previous := mode == LogPrevious
 	opts := &corev1.PodLogOptions{
 		Container: container,
-		Follow:    follow,
+		Follow:    !previous,
+		Previous:  previous,
 	}
 	if tail >= 0 {
 		opts.TailLines = &tail
 	}
-	return c.clientset.CoreV1().Pods(namespace).GetLogs(pod, opts).Stream(ctx)
+	return opts
 }

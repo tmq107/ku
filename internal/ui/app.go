@@ -115,6 +115,7 @@ type App struct {
 	configTarget      target
 	detailTarget      target
 	logTarget         target
+	logPrevious       map[string]bool
 	execTarget        target
 	portForwardTarget target
 	portForwardPorts  []k8s.ServicePort
@@ -1058,7 +1059,13 @@ func (a App) updateLogs(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.logs.clear()
 		a.setStatus("cleared logs", false)
 		return a, nil
-	case key.Matches(msg, a.keys.Follow):
+	case key.Matches(msg, a.keys.Previous) && a.logs.previousAvailable && a.logs.deploy == "":
+		mode := k8s.LogPrevious
+		if a.logs.isPrevious() {
+			mode = k8s.LogCurrent
+		}
+		return a.startPodLogs(a.logs.ns, a.logs.pod, a.logs.cont, true, mode)
+	case key.Matches(msg, a.keys.Follow) && !a.logs.isPrevious():
 		a.logs.follow = !a.logs.follow
 		a.logs.stickToBottom()
 		return a, nil
@@ -1301,6 +1308,7 @@ func (a App) openLogs() (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 	a.logTarget = target{ns: row.Namespace, name: row.Name}
+	a.logPrevious = nil
 	return a, containersCmd(a.client, row.Namespace, row.Name, false)
 }
 
@@ -1396,20 +1404,28 @@ func (a App) handleContainers(m containersMsg) (tea.Model, tea.Cmd) {
 		a.setStatus(trimErr(m.err), true)
 		return a, nil
 	}
-	if len(m.names) == 0 {
+	if len(m.containers) == 0 {
 		a.setStatus("no containers found", true)
 		return a, nil
 	}
-	if len(m.names) == 1 {
+	if len(m.containers) == 1 {
+		container := m.containers[0]
 		if m.forExec {
-			return a.startExec(a.client, m.ns, m.pod, m.names[0], "", nil, nil)
+			return a.startExec(a.client, m.ns, m.pod, container.Name, "", nil, nil)
 		}
-		return a.startLogs(m.ns, m.pod, m.names[0])
+		return a.startLogs(m.ns, m.pod, container.Name, container.PreviousAvailable)
 	}
 
-	items := make([]selItem, len(m.names))
-	for i, n := range m.names {
-		items[i] = selItem{title: n, id: n}
+	items := make([]selItem, len(m.containers))
+	if !m.forExec {
+		a.logPrevious = make(map[string]bool, len(m.containers))
+	}
+	for i, container := range m.containers {
+		items[i] = selItem{title: container.Name, id: container.Name}
+		if !m.forExec && container.PreviousAvailable {
+			items[i].desc = "previous available"
+			a.logPrevious[container.Name] = true
+		}
 	}
 	kind := selContainer
 	title := "Logs — " + m.pod
@@ -1466,7 +1482,11 @@ func (a App) handleDeploymentLogs(m deploymentLogsMsg) (tea.Model, tea.Cmd) {
 func (a *App) applyLogEvent(ev logEvent) {
 	switch {
 	case ev.err != nil:
-		a.setStatus("logs: "+trimErr(ev.err), true)
+		message := trimErr(ev.err)
+		a.setStatus("logs: "+message, true)
+		if a.logs.isPrevious() {
+			a.logs.storeLine("Error: " + message)
+		}
 	case ev.done:
 		a.logs.streams--
 	default:
@@ -1474,8 +1494,13 @@ func (a *App) applyLogEvent(ev logEvent) {
 	}
 }
 
-func (a App) startLogs(ns, pod, container string) (tea.Model, tea.Cmd) {
+func (a App) startLogs(ns, pod, container string, previousAvailable bool) (tea.Model, tea.Cmd) {
+	return a.startPodLogs(ns, pod, container, previousAvailable, k8s.LogCurrent)
+}
+
+func (a App) startPodLogs(ns, pod, container string, previousAvailable bool, mode k8s.LogMode) (tea.Model, tea.Cmd) {
 	a.logs.stop()
+	a.clearStatus()
 	a.logSession++
 	sess := a.logSession
 
@@ -1483,7 +1508,12 @@ func (a App) startLogs(ns, pod, container string) (tea.Model, tea.Cmd) {
 	a.logs.session = sess
 	a.logs.streams = 1
 	a.logs.ns, a.logs.pod, a.logs.cont = ns, pod, container
+	a.logs.previousAvailable = previousAvailable
+	a.logs.mode = mode
 	a.logs.title = pod + " › " + container
+	if a.logs.isPrevious() {
+		a.logs.title += " (previous)"
+	}
 	a.logs.setSize(paneContentWidth(a.width), paneContentHeight(a.bodyH()))
 
 	ch := make(chan logEvent, 256)
@@ -1492,7 +1522,7 @@ func (a App) startLogs(ns, pod, container string) (tea.Model, tea.Cmd) {
 	a.logs.cancel = cancel
 
 	a.screen = screenLogs
-	go streamLogs(ctx, a.client, ns, pod, container, "", sess, ch)
+	go streamLogs(ctx, a.client, ns, pod, container, "", mode, sess, ch)
 	return a, waitForLog(ch)
 }
 
@@ -1519,7 +1549,7 @@ func (a App) startDeploymentLogs(ns, deployment string, targets []k8s.LogTarget)
 	}
 	for _, t := range targets {
 		prefix := t.Pod + "/" + t.Container
-		go streamLogs(ctx, a.client, t.Namespace, t.Pod, t.Container, prefix, sess, ch)
+		go streamLogs(ctx, a.client, t.Namespace, t.Pod, t.Container, prefix, k8s.LogCurrent, sess, ch)
 	}
 	return a, waitForLog(ch)
 }
@@ -2204,7 +2234,7 @@ func (a App) applySelection(res selResult) (tea.Model, tea.Cmd) {
 		a.setStatus("switching context…", false)
 		return a, switchContextCmd(res.id, a.client.Kubeconfig())
 	case selContainer:
-		return a.startLogs(a.logTarget.ns, a.logTarget.name, res.id)
+		return a.startLogs(a.logTarget.ns, a.logTarget.name, res.id, a.logPrevious[res.id])
 	case selExecContainer:
 		return a.startExec(a.client, a.execTarget.ns, a.execTarget.name, res.id, "", nil, nil)
 	case selScale:
@@ -2673,7 +2703,18 @@ func (a App) hints() []hint {
 		h = append(h, hint{"/", "filter"}, hint{"v", "select"}, hint{"c", "copy"})
 		return append(h, editModeHint, hint{"O", "docs"}, hint{"esc", "back"})
 	case screenLogs:
-		return []hint{{"↑↓", "scroll"}, {"f", "follow"}, {"/", "filter"}, {"w", "wrap"}, {"v", "select"}, {"c", "copy"}, {"^l", "clear"}, editModeHint, {"O", "docs"}, {"esc", "back"}}
+		h := []hint{{"↑↓", "scroll"}}
+		if a.logs.previousAvailable && a.logs.deploy == "" {
+			if a.logs.isPrevious() {
+				h = append(h, hint{"p", "current"})
+			} else {
+				h = append(h, hint{"p", "previous"})
+			}
+		}
+		if !a.logs.isPrevious() {
+			h = append(h, hint{"f", "follow"})
+		}
+		return append(h, hint{"/", "filter"}, hint{"w", "wrap"}, hint{"v", "select"}, hint{"c", "copy"}, hint{"^l", "clear"}, editModeHint, hint{"O", "docs"}, hint{"esc", "back"})
 	case screenCockpit:
 		if a.focus == focusSidebar {
 			return []hint{{"↑↓", "pick"}, {"enter", "open"}, {"tab", "table"}, {":", "jump"}, editModeHint, {"C", "cmd"}, {"?", "help"}}
