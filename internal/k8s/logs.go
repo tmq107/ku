@@ -105,7 +105,8 @@ func podContainers(p *corev1.Pod) []PodContainer {
 }
 
 func hasPreviousInstance(status corev1.ContainerStatus) bool {
-	return status.RestartCount > 0 && status.LastTerminationState.Terminated != nil
+	terminated := status.LastTerminationState.Terminated
+	return terminated != nil && terminated.ContainerID != ""
 }
 
 // LogStream opens logs for the selected container instance. Current logs follow

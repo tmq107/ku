@@ -112,6 +112,33 @@ func TestLogContainerPickerMarksPreviousAvailability(t *testing.T) {
 	}
 }
 
+func TestHandleContainersIgnoresStaleLookup(t *testing.T) {
+	theme := PickTheme("ansi")
+	client := &k8s.Client{}
+	app := App{
+		client:    client,
+		theme:     theme,
+		logTarget: target{ns: "default", name: "api"},
+		lookupSeq: 4,
+		screen:    screenTable,
+		sel:       newSelector(theme),
+	}
+	msg := containersMsg{
+		client:     client,
+		seq:        3,
+		source:     screenTable,
+		ns:         "default",
+		pod:        "api",
+		containers: []k8s.PodContainer{{Name: "app"}},
+	}
+
+	model, cmd := app.handleContainers(msg)
+	got := model.(App)
+	if cmd != nil || got.screen != screenTable || got.overlay != overlayNone {
+		t.Fatalf("stale container lookup changed app: screen=%v overlay=%v cmd=%v", got.screen, got.overlay, cmd != nil)
+	}
+}
+
 func TestPreviousLogHintsReplaceFollow(t *testing.T) {
 	app := App{screen: screenLogs}
 	app.logs.previousAvailable = true

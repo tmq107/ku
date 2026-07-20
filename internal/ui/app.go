@@ -125,6 +125,7 @@ type App struct {
 
 	logSession int
 	loadSeq    int
+	lookupSeq  int
 
 	spin      spinner.Model
 	loading   bool
@@ -547,7 +548,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.logs.streams <= 0 {
 			return a, nil // every stream ended; stop waiting
 		}
-		return a, waitForLog(a.logs.ch)
+		return a, waitForLog(a.logs.ch, a.logs.done, a.logs.session)
 
 	case deploymentLogsMsg:
 		return a.handleDeploymentLogs(m)
@@ -1187,6 +1188,7 @@ func (a App) switchResource(ri k8s.ResourceInfo) (tea.Model, tea.Cmd) {
 }
 
 func (a *App) useResource(ri k8s.ResourceInfo) {
+	a.lookupSeq++
 	a.res = ri
 	a.screen = screenTable
 	a.focus = focusMain
@@ -1198,6 +1200,7 @@ func (a *App) useResource(ri k8s.ResourceInfo) {
 }
 
 func (a App) switchToCockpit() (tea.Model, tea.Cmd) {
+	a.lookupSeq++
 	a.screen = screenCockpit
 	a.focus = focusMain
 	a.sidebar.syncTo(overviewKey)
@@ -1263,6 +1266,7 @@ func (a App) openDetailTarget(t target) (tea.Model, tea.Cmd) {
 	if t.name == "" {
 		return a, nil
 	}
+	a.lookupSeq++
 	a.detailTarget = t
 	a.screen = screenDetail
 	a.detail.setMessage(t.name, "loading…")
@@ -1287,6 +1291,7 @@ func (a App) openConfigTarget(t target) (tea.Model, tea.Cmd) {
 	if t.name == "" {
 		return a, nil
 	}
+	a.lookupSeq++
 	a.configTarget = t
 	a.screen = screenConfig
 	a.config.setMessage(t.name, "loading…")
@@ -1309,7 +1314,8 @@ func (a App) openLogs() (tea.Model, tea.Cmd) {
 	}
 	a.logTarget = target{ns: row.Namespace, name: row.Name}
 	a.logPrevious = nil
-	return a, containersCmd(a.client, row.Namespace, row.Name, false)
+	a.lookupSeq++
+	return a, containersCmd(a.client, a.lookupSeq, a.screen, row.Namespace, row.Name, false)
 }
 
 func (a App) openDeploymentLogs() (tea.Model, tea.Cmd) {
@@ -1338,7 +1344,8 @@ func (a App) openDeploymentLogsTarget(t target) (tea.Model, tea.Cmd) {
 	}
 	a.logTarget = target{res: t.res, ns: ns, name: t.name}
 	a.setStatus("loading logs for "+qualified(ns, t.name), false)
-	return a, deploymentLogsCmd(a.client, ns, t.name)
+	a.lookupSeq++
+	return a, deploymentLogsCmd(a.client, a.lookupSeq, a.screen, ns, t.name)
 }
 
 func (a App) openShellOrScale() (tea.Model, tea.Cmd) {
@@ -1364,7 +1371,8 @@ func (a App) openShell() (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 	a.execTarget = target{ns: row.Namespace, name: row.Name}
-	return a, containersCmd(a.client, row.Namespace, row.Name, true)
+	a.lookupSeq++
+	return a, containersCmd(a.client, a.lookupSeq, a.screen, row.Namespace, row.Name, true)
 }
 
 // openNodeShell starts a node shell by spawning a privileged debug pod on the
@@ -1393,11 +1401,18 @@ func (a App) startNodeExec(m nodeDebugReadyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (a App) handleContainers(m containersMsg) (tea.Model, tea.Cmd) {
+	if m.client != a.client || m.seq != a.lookupSeq || m.source != a.screen || a.overlay != overlayNone {
+		return a, nil
+	}
 	wantNS, wantPod := a.logTarget.ns, a.logTarget.name
 	if m.forExec {
 		wantNS, wantPod = a.execTarget.ns, a.execTarget.name
 	}
 	if m.ns != wantNS || m.pod != wantPod {
+		return a, nil
+	}
+	a.lookupSeq++
+	if m.forExec && a.denyReadOnly("shell") {
 		return a, nil
 	}
 	if m.err != nil {
@@ -1462,9 +1477,11 @@ func (a App) handleServicePorts(m servicePortsMsg) (tea.Model, tea.Cmd) {
 }
 
 func (a App) handleDeploymentLogs(m deploymentLogsMsg) (tea.Model, tea.Cmd) {
-	if m.ns != a.logTarget.ns || m.name != a.logTarget.name || !a.logTarget.res.IsDeployment() {
+	if m.client != a.client || m.seq != a.lookupSeq || m.source != a.screen || a.overlay != overlayNone ||
+		m.ns != a.logTarget.ns || m.name != a.logTarget.name || !a.logTarget.res.IsDeployment() {
 		return a, nil
 	}
+	a.lookupSeq++
 	if m.err != nil {
 		a.setStatus("logs: "+trimErr(m.err), true)
 		return a, nil
@@ -1520,10 +1537,11 @@ func (a App) startPodLogs(ns, pod, container string, previousAvailable bool, mod
 	a.logs.ch = ch
 	ctx, cancel := context.WithCancel(context.Background())
 	a.logs.cancel = cancel
+	a.logs.done = ctx.Done()
 
 	a.screen = screenLogs
 	go streamLogs(ctx, a.client, ns, pod, container, "", mode, sess, ch)
-	return a, waitForLog(ch)
+	return a, waitForLog(ch, a.logs.done, sess)
 }
 
 func (a App) startDeploymentLogs(ns, deployment string, targets []k8s.LogTarget) (tea.Model, tea.Cmd) {
@@ -1542,6 +1560,7 @@ func (a App) startDeploymentLogs(ns, deployment string, targets []k8s.LogTarget)
 	a.logs.ch = ch
 	ctx, cancel := context.WithCancel(context.Background())
 	a.logs.cancel = cancel
+	a.logs.done = ctx.Done()
 
 	a.screen = screenLogs
 	if !a.statusErr {
@@ -1551,7 +1570,7 @@ func (a App) startDeploymentLogs(ns, deployment string, targets []k8s.LogTarget)
 		prefix := t.Pod + "/" + t.Container
 		go streamLogs(ctx, a.client, t.Namespace, t.Pod, t.Container, prefix, k8s.LogCurrent, sess, ch)
 	}
-	return a, waitForLog(ch)
+	return a, waitForLog(ch, a.logs.done, sess)
 }
 
 // startExec opens the embedded-terminal overlay running command (nil = default
@@ -1995,6 +2014,7 @@ func (a App) openCommand() (tea.Model, tea.Cmd) {
 }
 
 func (a App) toggleAllNS() (tea.Model, tea.Cmd) {
+	a.lookupSeq++
 	if a.namespace == "" {
 		a.namespace = a.lastNS
 	} else {
@@ -2219,6 +2239,7 @@ func (a App) applySelection(res selResult) (tea.Model, tea.Cmd) {
 		a.setStatus("unknown resource", true)
 		return a, nil
 	case selNamespace:
+		a.lookupSeq++
 		if res.id == "*" {
 			a.namespace = ""
 		} else {
@@ -2231,11 +2252,15 @@ func (a App) applySelection(res selResult) (tea.Model, tea.Cmd) {
 		if res.id == a.client.ContextName {
 			return a, nil
 		}
+		a.lookupSeq++
 		a.setStatus("switching context…", false)
 		return a, switchContextCmd(res.id, a.client.Kubeconfig())
 	case selContainer:
 		return a.startLogs(a.logTarget.ns, a.logTarget.name, res.id, a.logPrevious[res.id])
 	case selExecContainer:
+		if a.denyReadOnly("shell") {
+			return a, nil
+		}
 		return a.startExec(a.client, a.execTarget.ns, a.execTarget.name, res.id, "", nil, nil)
 	case selScale:
 		n, err := strconv.Atoi(strings.TrimSpace(res.value))

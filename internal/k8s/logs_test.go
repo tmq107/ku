@@ -22,13 +22,13 @@ func TestPodContainersMarksPreviousInstances(t *testing.T) {
 			InitContainerStatuses: []corev1.ContainerStatus{{
 				Name:                 "init",
 				RestartCount:         1,
-				LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
+				LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ContainerID: "containerd://init-old", ExitCode: 0}},
 			}},
 			ContainerStatuses: []corev1.ContainerStatus{
 				{
 					Name:                 "app",
 					RestartCount:         2,
-					LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1}},
+					LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ContainerID: "containerd://app-old", ExitCode: 1}},
 				},
 				{
 					Name:                 "sidecar",
@@ -51,6 +51,46 @@ func TestPodContainersMarksPreviousInstances(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("PodContainers() = %#v, want %#v", got, want)
+	}
+}
+
+func TestHasPreviousInstanceRequiresContainerID(t *testing.T) {
+	tests := []struct {
+		name   string
+		status corev1.ContainerStatus
+		want   bool
+	}{
+		{
+			name: "terminated container",
+			status: corev1.ContainerStatus{
+				RestartCount:         1,
+				LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ContainerID: "containerd://old"}},
+			},
+			want: true,
+		},
+		{
+			name: "missing container ID",
+			status: corev1.ContainerStatus{
+				RestartCount:         1,
+				LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{}},
+			},
+		},
+		{
+			name: "restart count reset",
+			status: corev1.ContainerStatus{
+				LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ContainerID: "containerd://old"}},
+			},
+			want: true,
+		},
+		{name: "no terminated container"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasPreviousInstance(tt.status); got != tt.want {
+				t.Fatalf("hasPreviousInstance() = %t, want %t", got, tt.want)
+			}
+		})
 	}
 }
 

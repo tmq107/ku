@@ -27,6 +27,7 @@ type logView struct {
 	streams int
 	cancel  context.CancelFunc
 	ch      chan logEvent
+	done    <-chan struct{}
 }
 
 func newLogView(th Theme) logView {
@@ -68,12 +69,12 @@ func (l logView) View() string {
 // made that event irrelevant.
 func streamLogs(ctx context.Context, cl *k8s.Client, ns, pod, cont, prefix string, mode k8s.LogMode, session int, ch chan logEvent) {
 	defer func() {
-		sendLogEvent(ch, logEvent{session: session, done: true})
+		sendLogEvent(ctx, ch, logEvent{session: session, done: true})
 	}()
 
 	rc, err := cl.LogStream(ctx, ns, pod, cont, logTailLines, mode)
 	if err != nil {
-		sendLogEvent(ch, logEvent{session: session, err: err})
+		sendLogEvent(ctx, ch, logEvent{session: session, err: err})
 		return
 	}
 	defer rc.Close()
@@ -97,22 +98,27 @@ func streamLogs(ctx context.Context, cl *k8s.Client, ns, pod, cont, prefix strin
 		}
 		if err != nil {
 			if err != io.EOF && ctx.Err() == nil {
-				sendLogEvent(ch, logEvent{session: session, err: err})
+				sendLogEvent(ctx, ch, logEvent{session: session, err: err})
 			}
 			return
 		}
 	}
 }
 
-func sendLogEvent(ch chan<- logEvent, ev logEvent) {
+func sendLogEvent(ctx context.Context, ch chan<- logEvent, ev logEvent) {
 	select {
 	case ch <- ev:
-	default:
+	case <-ctx.Done():
 	}
 }
 
-func waitForLog(ch chan logEvent) tea.Cmd {
+func waitForLog(ch <-chan logEvent, done <-chan struct{}, session int) tea.Cmd {
 	return func() tea.Msg {
-		return <-ch
+		select {
+		case ev := <-ch:
+			return ev
+		case <-done:
+			return logEvent{session: session, done: true}
+		}
 	}
 }

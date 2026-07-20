@@ -131,6 +131,49 @@ func TestReadOnlyBlocksMutations(t *testing.T) {
 	}
 }
 
+func TestReadOnlyBlocksPendingShellLookup(t *testing.T) {
+	client := &k8s.Client{}
+	app := App{
+		client:     client,
+		readOnly:   true,
+		execTarget: target{ns: "default", name: "api"},
+		lookupSeq:  3,
+		screen:     screenTable,
+	}
+	msg := containersMsg{
+		client:  client,
+		seq:     3,
+		source:  screenTable,
+		ns:      "default",
+		pod:     "api",
+		forExec: true,
+		containers: []k8s.PodContainer{
+			{Name: "app"},
+			{Name: "sidecar"},
+		},
+	}
+
+	model, cmd := app.handleContainers(msg)
+	got := model.(App)
+	if cmd != nil || got.overlay != overlayNone || !got.statusErr || !strings.Contains(got.status, "read-only") {
+		t.Fatalf("pending shell was not blocked: overlay=%v status=%q err=%t cmd=%v", got.overlay, got.status, got.statusErr, cmd != nil)
+	}
+}
+
+func TestReadOnlyBlocksShellPickerSelection(t *testing.T) {
+	app := App{
+		readOnly:   true,
+		execTarget: target{ns: "default", name: "api"},
+	}
+	app.sel.kind = selExecContainer
+
+	model, cmd := app.applySelection(selResult{id: "app"})
+	got := model.(App)
+	if cmd != nil || got.overlay != overlayNone || !got.statusErr || !strings.Contains(got.status, "read-only") {
+		t.Fatalf("shell picker selection was not blocked: overlay=%v status=%q err=%t cmd=%v", got.overlay, got.status, got.statusErr, cmd != nil)
+	}
+}
+
 func TestDevModeBlocksNodeOps(t *testing.T) {
 	nodes, _ := modeTestRegistry().Resolve("nodes")
 	base := App{theme: PickTheme("ansi"), dev: true, res: nodes}
