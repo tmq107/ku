@@ -67,13 +67,19 @@ type namespacesMsg struct {
 }
 
 type containersMsg struct {
-	ns, pod string
-	names   []string
-	forExec bool // true: open a shell; false: stream logs
-	err     error
+	client     *k8s.Client
+	seq        int
+	source     screen
+	ns, pod    string
+	containers []k8s.PodContainer
+	forExec    bool // true: open a shell; false: stream logs
+	err        error
 }
 
 type deploymentLogsMsg struct {
+	client   *k8s.Client
+	seq      int
+	source   screen
 	ns, name string
 	targets  []k8s.LogTarget
 	err      error
@@ -333,21 +339,21 @@ func namespacesCmd(cl *k8s.Client) tea.Cmd {
 	}
 }
 
-func containersCmd(cl *k8s.Client, ns, pod string, forExec bool) tea.Cmd {
+func containersCmd(cl *k8s.Client, seq int, source screen, ns, pod string, forExec bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := opCtx()
 		defer cancel()
-		names, err := cl.PodContainers(ctx, ns, pod)
-		return containersMsg{ns: ns, pod: pod, names: names, forExec: forExec, err: err}
+		containers, err := cl.PodContainers(ctx, ns, pod)
+		return containersMsg{client: cl, seq: seq, source: source, ns: ns, pod: pod, containers: containers, forExec: forExec, err: err}
 	}
 }
 
-func deploymentLogsCmd(cl *k8s.Client, ns, name string) tea.Cmd {
+func deploymentLogsCmd(cl *k8s.Client, seq int, source screen, ns, name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := opCtx()
 		defer cancel()
 		targets, err := cl.DeploymentLogTargets(ctx, ns, name)
-		return deploymentLogsMsg{ns: ns, name: name, targets: targets, err: err}
+		return deploymentLogsMsg{client: cl, seq: seq, source: source, ns: ns, name: name, targets: targets, err: err}
 	}
 }
 

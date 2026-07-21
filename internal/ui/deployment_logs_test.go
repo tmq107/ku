@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/bjarneo/ku/internal/k8s"
 )
@@ -88,14 +90,98 @@ func TestDeploymentLogDoneWaitsForRemainingStreams(t *testing.T) {
 
 func TestSendLogEventReleasesWait(t *testing.T) {
 	ch := make(chan logEvent, 1)
-	sendLogEvent(ch, logEvent{session: 9, done: true})
+	sendLogEvent(context.Background(), ch, logEvent{session: 9, done: true})
 
-	msg := waitForLog(ch)()
+	msg := waitForLog(ch, nil, 9)()
 	got, ok := msg.(logEvent)
 	if !ok {
 		t.Fatalf("waitForLog returned %T, want logEvent", msg)
 	}
 	if got.session != 9 || !got.done {
 		t.Fatalf("logEvent = %+v, want session 9 done", got)
+	}
+}
+
+func TestSendLogEventDoesNotDropTerminalEventWhenFull(t *testing.T) {
+	ch := make(chan logEvent, 1)
+	ch <- logEvent{session: 9, line: "last line"}
+	sent := make(chan struct{})
+	go func() {
+		sendLogEvent(context.Background(), ch, logEvent{session: 9, done: true})
+		close(sent)
+	}()
+
+	first := <-ch
+	var second logEvent
+	select {
+	case second = <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("terminal event was dropped")
+	}
+	select {
+	case <-sent:
+	case <-time.After(time.Second):
+		t.Fatal("terminal event sender remained blocked")
+	}
+	if first.line != "last line" || !second.done {
+		t.Fatalf("events = %+v, %+v; want final line then done", first, second)
+	}
+}
+
+func TestSendLogEventStopsWaitingAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	ch := make(chan logEvent, 1)
+	ch <- logEvent{session: 9, line: "buffered"}
+	cancel()
+
+	finished := make(chan struct{})
+	go func() {
+		sendLogEvent(ctx, ch, logEvent{session: 9, done: true})
+		close(finished)
+	}()
+
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("terminal event sender ignored cancellation")
+	}
+}
+
+func TestWaitForLogStopsAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	msg := waitForLog(make(chan logEvent), ctx.Done(), 9)()
+	got, ok := msg.(logEvent)
+	if !ok || got.session != 9 || !got.done {
+		t.Fatalf("waitForLog returned %#v, want session 9 done", msg)
+	}
+}
+
+func TestHandleDeploymentLogsIgnoresOldClient(t *testing.T) {
+	current := &k8s.Client{}
+	app := App{
+		client:    current,
+		logTarget: target{res: k8s.ResourceInfo{Group: "apps", Resource: "deployments"}, ns: "default", name: "api"},
+		lookupSeq: 2,
+		screen:    screenTable,
+	}
+	msg := deploymentLogsMsg{
+		client: &k8s.Client{},
+		seq:    2,
+		source: screenTable,
+		ns:     "default",
+		name:   "api",
+		targets: []k8s.LogTarget{{
+			Namespace: "default",
+			Pod:       "api-123",
+			Container: "app",
+		}},
+	}
+
+	model, cmd := app.handleDeploymentLogs(msg)
+	got := model.(App)
+	if cmd != nil || got.screen != screenTable {
+		t.Fatalf("old-client deployment lookup changed app: screen=%v cmd=%v", got.screen, cmd != nil)
 	}
 }

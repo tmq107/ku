@@ -49,13 +49,14 @@ type keyMap struct {
 	Wide      key.Binding
 
 	// logs
-	Follow  key.Binding
-	Wrap    key.Binding
-	Select  key.Binding
-	Mark    key.Binding
-	Copy    key.Binding
-	CopyAll key.Binding
-	Clear   key.Binding
+	Follow   key.Binding
+	Previous key.Binding
+	Wrap     key.Binding
+	Select   key.Binding
+	Mark     key.Binding
+	Copy     key.Binding
+	CopyAll  key.Binding
+	Clear    key.Binding
 
 	// global
 	Help key.Binding
@@ -105,13 +106,14 @@ func defaultKeys() keyMap {
 		AllNS:     key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "all namespaces")),
 		Wide:      key.NewBinding(key.WithKeys("w"), key.WithHelp("w", "wide columns")),
 
-		Follow:  key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow")),
-		Wrap:    key.NewBinding(key.WithKeys("w", "ctrl+w"), key.WithHelp("w/^w", "wrap lines")),
-		Select:  key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "select lines")),
-		Mark:    key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mark")),
-		Copy:    key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy selection")),
-		CopyAll: key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy all")),
-		Clear:   key.NewBinding(key.WithKeys("ctrl+l"), key.WithHelp("^l", "clear")),
+		Follow:   key.NewBinding(key.WithKeys("f"), key.WithHelp("f", "follow")),
+		Previous: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "previous logs")),
+		Wrap:     key.NewBinding(key.WithKeys("w", "ctrl+w"), key.WithHelp("w/^w", "wrap lines")),
+		Select:   key.NewBinding(key.WithKeys("v"), key.WithHelp("v", "select lines")),
+		Mark:     key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mark")),
+		Copy:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "copy selection")),
+		CopyAll:  key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "copy all")),
+		Clear:    key.NewBinding(key.WithKeys("ctrl+l"), key.WithHelp("^l", "clear")),
 
 		Help: key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 		Back: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
@@ -132,7 +134,7 @@ func (k keyMap) groups() []helpGroup {
 
 		{"Views", []key.Binding{k.Focus, k.Jump, k.Palette, k.EditMode, k.Filter, k.Sort, k.Refresh, k.Wide, k.Command}},
 		{"Cluster", []key.Binding{k.Namespace, k.AllNS, k.Context}},
-		{"Logs", []key.Binding{k.Follow, k.Filter, k.Wrap, k.Select, k.Mark, k.Copy, k.CopyAll, k.Clear}},
+		{"Logs", []key.Binding{k.Follow, k.Previous, k.Filter, k.Wrap, k.Select, k.Mark, k.Copy, k.CopyAll, k.Clear}},
 		{"General", []key.Binding{k.Help, k.Back, k.Quit}},
 	}
 }
